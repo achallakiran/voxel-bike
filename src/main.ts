@@ -1,6 +1,6 @@
 import {COURSES, PIECES, DT, Track, Race, clamp, type Course, type Piece, type Mode, type RecordRun} from './race';
 import {pieceSpec} from './tracks';
-import {View} from './view';
+import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
 type Screen = 'home'|'select'|'settings'|'builder'|'race'|'pause'|'results'|'rotate'|'error';
@@ -83,7 +83,8 @@ const tapButtons=Array.from(document.querySelectorAll<HTMLButtonElement>('[data-
 const coarse=matchMedia('(any-pointer: coarse)');
 const portrait=matchMedia('(orientation: portrait)');
 const sound=new Sound();
-const settings=load('settings',{sound:true,quality:true});
+const settings=load<{sound:boolean;quality:boolean;camera?:number}>('settings',{sound:true,quality:true});
+let cameraIndex:CameraIndex=0;
 const nameInput=el<HTMLInputElement>('trackName');
 const themeInput=el<HTMLSelectElement>('theme');
 const fileInput=el<HTMLInputElement>('fileInput');
@@ -92,7 +93,7 @@ let view:View|undefined;
 let countdown='', lastSignal='';
 function storedRun(id:string) {
   if(runRecords.has(id))return runRecords.get(id);
-  const r=load<RecordRun|null>('best:v2:'+id,null);
+  const r=load<RecordRun|null>('best:v3:'+id,null);
   if(r&&Number.isFinite(r.time)&&r.time>0&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===10&&f.every(Number.isFinite))){
     runRecords.set(id,r);return r;
   }
@@ -118,7 +119,6 @@ function show(next:Screen){
 }
 function home(){
   race=undefined;
-  view?.reset(new Track(COURSES[0]));
   show('home');
 }
 function choose(next:Mode){
@@ -166,7 +166,7 @@ function endRace(finished:Race){
     if(!best||time<best.time){
       const run={time,frames:finished.record};
       runRecords.set(course.id,run);
-      const saved=save('best:v2:'+course.id,run);
+      const saved=save('best:v3:'+course.id,run);
       detail=saved?'New personal best · Ghost saved':'New personal best · Ghost available this session';
     }else detail='Personal best '+clock(best.time)+' · +'+(time-best.time).toFixed(2)+' s';
     detail+=' · '+(time<=course.gold*1.29?'Qualified':'Target '+clock(course.gold*1.29));
@@ -186,6 +186,8 @@ function hud(r:Race){
   el('lap').textContent=r.track.laps>1?' · '+r.lap+'/'+r.track.laps:'';
   setFill('progress',clamp((r.rider.x-5)/(r.track.end-5)*100,0,100));
   setFill('heat',r.rider.heat);
+  const heatLabel=el('heatLabel'), label=r.rider.hot?'ENGINE CUT':'ENGINE HEAT';
+  if(heatLabel.textContent!==label)heatLabel.textContent=label;
   el('heat').closest('.hud-chip')?.classList.toggle('hot',r.rider.hot);
   const message=r.time<0?String(Math.ceil(-r.time)):r.time<0.65?'GO!':'';
   if(message!==countdown){
@@ -196,9 +198,9 @@ function hud(r:Race){
   const cue=r.feedbackTime>0?r.feedback:null;
   const feedback=el('feedback');
   feedback.hidden=!cue||!!message;feedback.textContent=cue??'';
-  feedback.classList.toggle('danger',cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out'||cue==='Contact');
+  feedback.classList.toggle('danger',cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out'||cue==='Contact'||cue==='Bump crash'||cue==='Dirt trap crash');
   if(cue&&cue!==lastSignal){
-    if(cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out')sound.beep(130,0.28);
+    if(cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out'||cue==='Bump crash'||cue==='Dirt trap crash')sound.beep(130,0.28);
     else if(cue==='Rough landing'||cue==='Bump')sound.beep(106,0.10);
     else if(cue==='Clean landing')sound.beep(196,0.09);
     else if(cue==='Lap 2')sound.beep(710,0.22);
@@ -275,6 +277,11 @@ window.addEventListener('keydown',e=>{
     if(screen==='race')show('pause');
     else if(screen==='pause'){show('race');orientation();}
     else if(screen==='rotate')exitRace();
+    return;
+  }
+  if(e.code==='KeyC'&&screen==='race'){
+    e.preventDefault();
+    if(!e.repeat)nextCamera();
     return;
   }
   const action=keys[e.code];
@@ -378,20 +385,31 @@ button('offline',()=>{
   document.body.append(a);a.click();a.remove();
 });
 if(location.protocol==='file:')el('offline').hidden=true;
+button('cameraButton',nextCamera);
 button('pauseButton',()=>show('pause'));
 button('resume',()=>{sound.unlock();show('race');orientation();});
 button('restart',()=>start(course));button('retry',()=>start(course));
 button('pauseExit',exitRace);button('resultExit',exitRace);button('rotateExit',exitRace);
 button('reload',()=>location.reload());
 const soundToggle=el<HTMLInputElement>('sound'), qualityToggle=el<HTMLInputElement>('quality');
+const cameraSetting=el<HTMLSelectElement>('cameraSetting');
+function setCamera(index:number){
+  cameraIndex=(Number.isInteger(index)&&index>=0&&index<CAMERA_NAMES.length?index:0) as CameraIndex;
+  cameraSetting.value=String(cameraIndex);
+  el('cameraButton').setAttribute('aria-label','Change camera · '+CAMERA_NAMES[cameraIndex]);
+  if(view)view.cameraIndex=cameraIndex;
+}
+function nextCamera(){setCamera((cameraIndex+1)%CAMERA_NAMES.length);syncSettings();}
+setCamera(settings.camera??0);
 soundToggle.checked=settings.sound;qualityToggle.checked=settings.quality;sound.enabled=settings.sound;
 function syncSettings(){
   sound.enabled=soundToggle.checked;
   if(view)view.quality=qualityToggle.checked;
-  save('settings',{sound:sound.enabled,quality:qualityToggle.checked});
+  save('settings',{sound:sound.enabled,quality:qualityToggle.checked,camera:cameraIndex});
 }
 soundToggle.addEventListener('change',()=>{syncSettings();sound.unlock();});
 qualityToggle.addEventListener('change',syncSettings);
+cameraSetting.addEventListener('change',()=>{setCamera(Number(cameraSetting.value));syncSettings();});
 let last=performance.now(), accumulator=0;
 function loop(now:number){
   const dt=clamp((now-last)/1000,0,0.12);last=now;
@@ -403,18 +421,21 @@ function loop(now:number){
     sound.update(race);
     if(race.done)endRace(race);
   }
-  if(screen!=='error')view?.frame(dt,race,screen==='home');
+  if(screen!=='error')view?.frame(dt,race);
   requestAnimationFrame(loop);
 }
 try{
   const canvas=el<HTMLCanvasElement>('world');
   view=new View(canvas);
   view.quality=settings.quality;
+  view.cameraIndex=cameraIndex;
+  const motion=matchMedia('(prefers-reduced-motion: reduce)');
+  view.reduceMotion=motion.matches;
+  motion.addEventListener('change',e=>{if(view)view.reduceMotion=e.matches;});
   canvas.addEventListener('webglcontextlost',e=>{
     e.preventDefault();
     el('errorMessage').textContent='The graphics context was interrupted. Reload to return to the starting gate.';
     show('error');
   });
-  view.reset(new Track(COURSES[0]));
   requestAnimationFrame(loop);
 }catch(error){console.error(error);show('error');}
