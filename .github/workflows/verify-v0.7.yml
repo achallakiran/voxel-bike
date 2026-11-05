@@ -1,0 +1,86 @@
+name: Validate Voxel Bikes v0.7
+on:
+  push:
+    branches: [voxel-bikes-v0.7]
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run check && npm run build && cmp dist/index.html dist/Voxel-Bikes-Offline.html
+      - name: Check race simulation
+        run: |
+          ./node_modules/.bin/esbuild src/race.ts --bundle --format=esm --outfile=/tmp/voxel-race.mjs
+          node --input-type=module <<'EOF'
+          import assert from 'node:assert/strict';
+          import {Race, Track, COURSES, DT} from '/tmp/voxel-race.mjs';
+          for(const course of COURSES) for(const laps of [3,5,7]) {
+            const race=new Race(new Track(course,laps),'trial',undefined);
+            race.inputs.gas=true;
+            for(let step=0;step<120*520&&!race.done;step++)race.step(DT);
+            assert(race.done,course.name+' '+laps);
+            assert.equal(race.splits.length,laps);
+            assert(Math.abs(race.elapsed-race.splits.reduce((a,b)=>a+b,0))<0.001);
+          }
+          const track=new Track(COURSES[0],3);
+          const dry=new Race(track,'trial',undefined);
+          const wet=new Race(track,'trial',undefined,{light:'Night',weather:'Rain'});
+          for(const race of [dry,wet]){
+            race.time=1;race.rider.x=12;race.rider.speed=20;race.inputs.brake=true;
+            for(let i=0;i<25;i++)race.step(DT);
+          }
+          assert(wet.rider.speed>dry.rider.speed);
+          const rival=new Race(track,'rival',undefined);
+          rival.time=20;
+          rival.rider.x=track.end-0.01;
+          rival.rider.speed=15;
+          rival.step(DT);
+          assert(rival.rider.finish>0&&!rival.done);
+          const time=rival.elapsed;
+          for(let i=0;i<1300&&!rival.done;i++)rival.step(DT);
+          assert(rival.done);
+          assert.equal(rival.elapsed,time);
+          assert.equal(rival.finishOrder[0].index,0);
+          assert(rival.crowd.some(e=>e.kind==='finish'));
+          EOF
+      - name: Browser smoke test
+        run: |
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+          node --input-type=module <<'EOF'
+          import {chromium} from 'playwright';
+          import assert from 'node:assert/strict';
+          const browser=await chromium.launch({args:['--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+          const page=await browser.newPage({viewport:{width:900,height:500},offline:true,reducedMotion:'reduce'});
+          const errors=[];
+          page.on('pageerror',e=>errors.push(e.message));
+          await page.goto('file://'+process.cwd()+'/dist/Voxel-Bikes-Offline.html');
+          await page.locator('#studioContinue').click();
+          await page.getByRole('button',{name:/Rival Race/}).click();
+          await page.locator('#daylightSetting').selectOption('Night');
+          await page.locator('#weatherSetting').selectOption('Thunderstorm');
+          await page.getByRole('button',{name:/Clay Circuit/}).click();
+          await page.waitForFunction(()=>document.querySelector('#countdown').textContent==='GO!');
+          await page.keyboard.down('KeyZ');
+          await page.keyboard.press('KeyC');
+          await page.screenshot({path:'/tmp/voxel-night.png'});
+          await page.keyboard.up('KeyZ');
+          assert.match(await page.locator('#cameraButton').getAttribute('aria-label'),/Broadcast/);
+          assert.deepEqual(errors,[]);
+          await browser.close();
+          EOF
+      - name: Save verified builds to staging branch
+        run: |
+          cp dist/index.html index.html
+          cp dist/Voxel-Bikes-Offline.html Voxel-Bikes-Offline.html
+          git config user.name github-actions
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.html Voxel-Bikes-Offline.html
+          git diff --cached --quiet || git commit -m "Build verified v0.7 offline and hosted HTML"
+          git push origin HEAD:voxel-bikes-v0.7

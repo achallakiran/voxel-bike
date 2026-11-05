@@ -1,4 +1,5 @@
 import {COURSES, PIECES, DT, Track, Race, clamp, type Course, type Piece, type Mode, type RecordRun} from './race';
+import {conditionKey, DEFAULT_CONDITIONS, type Conditions} from './conditions';
 import {pieceSpec} from './tracks';
 import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
@@ -25,6 +26,7 @@ function clock(value:number) {
 class Sound {
   enabled=true;
   private lastCrowd=0;
+  private lastThunder=-1;
   private duckUntil=0;
   private crowdNoise?:AudioBuffer;
   private ctx?:AudioContext;
@@ -44,12 +46,13 @@ class Sound {
       if(this.ctx.state!=='running')void this.ctx.resume().catch(()=>{});
     }catch{ /* Gameplay continues if audio is unavailable. */ }
   }
-  resetCrowd(){this.lastCrowd=0;this.duckUntil=0;}
+  resetCrowd(){this.lastCrowd=0;this.duckUntil=0;this.lastThunder=-1;}
   private crowd(race:Race){
-    const reaction=race.crowd, ctx=this.ctx;
-    if(!reaction||reaction.serial===this.lastCrowd||!ctx)return;
-    this.lastCrowd=reaction.serial;
-    if(!this.enabled||ctx.state!=='running'||Math.abs(race.track.delta(reaction.x,race.rider.x))>22)return;
+    const latest=race.crowd.at(-1), ctx=this.ctx;
+    if(!latest||latest.serial<=this.lastCrowd||!ctx)return;
+    const reaction=race.crowd.filter(event=>event.serial>this.lastCrowd&&Math.abs(race.track.delta(event.x,race.rider.x))<36).at(-1);
+    this.lastCrowd=latest.serial;
+    if(!reaction||!this.enabled||ctx.state!=='running'||ctx.currentTime<this.duckUntil&&reaction.kind!=='finish')return;
     if(!this.crowdNoise){
       this.crowdNoise=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*0.9),ctx.sampleRate);
       const samples=this.crowdNoise.getChannelData(0);
@@ -60,22 +63,31 @@ class Sound {
       }
     }
     const source=ctx.createBufferSource(), band=ctx.createBiquadFilter(), gain=ctx.createGain(), now=ctx.currentTime;
-    const cheer=reaction.kind==='cheer';
+    const cheer=reaction.kind!=='gasp';
+    const big=reaction.kind==='lap'||reaction.kind==='finish';
     this.duckUntil=now+0.63;
     source.buffer=this.crowdNoise;
     band.type='bandpass';band.Q.value=0.85;band.frequency.value=cheer?1190:630;
     band.frequency.exponentialRampToValueAtTime(cheer?1770:365,now+0.45);
     gain.gain.setValueAtTime(0.001,now);
-    gain.gain.exponentialRampToValueAtTime(cheer?0.23:0.19,now+0.075);
+    gain.gain.exponentialRampToValueAtTime(big?0.32:cheer?0.23:0.19,now+0.075);
     gain.gain.exponentialRampToValueAtTime(0.001,now+0.82);
     source.connect(band).connect(gain).connect(ctx.destination);
     source.start();
   }
   update(race:Race|undefined){
     if(!this.ctx||!this.engine||!this.gain||!this.filter)return;
-    if(race)this.crowd(race);
+    if(race){
+      this.crowd(race);
+      const stormTime=race.time-18.85;
+      const flash=Math.floor(stormTime/20);
+      if(race.conditions.weather==='Thunderstorm'&&flash>this.lastThunder&&stormTime>=0&&!race.done){
+        this.lastThunder=flash;
+        this.thunder();
+      }
+    }
     const bike=race?.rider;
-    const running=this.enabled&&bike&&!race.done&&race.time>0;
+    const running=this.enabled&&bike&&!bike.finish&&!race.done&&race.time>0;
     const now=this.ctx.currentTime;
     const motor=running?(bike.crash?0.014:!race.inputs.brake&&(race.inputs.gas||race.inputs.turbo)?0.055:0.026):0;
     this.gain.gain.setTargetAtTime(motor*(now<this.duckUntil?0.36:1),now,0.05);
@@ -83,6 +95,24 @@ class Sound {
     const rev=43+bike.speed*2.9+(bike.air?18:0)+(race.inputs.turbo&&!bike.hot?13:0);
     this.engine.frequency.setTargetAtTime(bike.crash?38:rev,now,0.035);
     this.filter.frequency.setTargetAtTime(bike.hot?180:220+bike.speed*17,now,0.07);
+  }
+  private thunder(){
+    const ctx=this.ctx;
+    if(!this.enabled||!ctx||ctx.state!=='running')return;
+    const buffer=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*1.1),ctx.sampleRate);
+    const samples=buffer.getChannelData(0);
+    let roll=0;
+    for(let i=0;i<samples.length;i++){
+      roll=roll*0.988+(Math.random()*2-1)*0.012;
+      samples[i]=roll;
+    }
+    const source=ctx.createBufferSource(), gain=ctx.createGain(), now=ctx.currentTime;
+    source.buffer=buffer;
+    gain.gain.setValueAtTime(0.001,now);
+    gain.gain.exponentialRampToValueAtTime(0.52,now+0.12);
+    gain.gain.exponentialRampToValueAtTime(0.001,now+1.1);
+    source.connect(gain).connect(ctx.destination);
+    source.start();
   }
   beep(frequency:number, duration=0.15){
     if(!this.enabled||!this.ctx||this.ctx.state!=='running')return;
@@ -121,6 +151,20 @@ let cameraIndex:CameraIndex=0;
 let rotationReturn:Screen='intro';
 const forwardView=()=>cameraIndex===2||cameraIndex===4;
 const lapSetting=el<HTMLSelectElement>('lapSetting');
+const daylightSetting=el<HTMLSelectElement>('daylightSetting'), weatherSetting=el<HTMLSelectElement>('weatherSetting');
+function selectedConditions():Conditions{
+  return {light:daylightSetting.value as Conditions['light'],weather:weatherSetting.value as Conditions['weather']};
+}
+function recordKey(courseId:string,laps:number,conditions:Conditions){
+  return courseId+':'+laps+conditionKey(conditions);
+}
+const histories=new Map<string,number[]>();
+function pastTimes(key:string,best:number|undefined){
+  if(histories.has(key))return histories.get(key)!;
+  const raw=load<unknown>('podium:v1:'+key,null);
+  return Array.isArray(raw)?raw.filter(t=>typeof t==='number'&&Number.isFinite(t)&&t>0).sort((a,b)=>a-b).slice(0,2)
+    :best===undefined?[]:[best];
+}
 const savedLaps=load('raceLaps',3);
 let raceLaps=[3,5,7].includes(savedLaps)?savedLaps:3;
 lapSetting.value=String(raceLaps);
@@ -215,12 +259,13 @@ function choose(next:Mode){
   renderCourses();
   show('select');
 }
+for(const control of [daylightSetting,weatherSetting])control.addEventListener('change',renderCourses);
 function renderCourses(){
   el('modeTitle').textContent=mode==='trial'?'Time Trial':'Rival Race';
   el('courses').replaceChildren(...COURSES.map((c,i)=>{
     const b=document.createElement('button');b.className='course-card';
     b.style.setProperty('--card',['#b42630','#925557','#713538','#c02430','#b48580'][i]);
-    const best=mode==='trial'?storedRun(c.id+':'+raceLaps):undefined;
+    const best=mode==='trial'?storedRun(recordKey(c.id,raceLaps,selectedConditions())):undefined;
     const preview=coursePreviews[i];
     b.innerHTML='<span class="card-index">0'+(i+1)+' · '+preview.length+' M</span>'+preview.diagram+'<b>'+c.name+'</b><span>'+c.tagline+'</span>'+
       '<small>'+(mode==='trial'?'QUALIFY '+clock(c.gold*raceLaps*1.29):raceLaps+' LAPS')+
@@ -232,28 +277,70 @@ function start(c:Course){
   if(!view)return;
   course=c;
   const track=new Track(course,mode==='test'?1:raceLaps);
-  view.reset(track);
-  race=new Race(track,mode,mode==='trial'?storedRun(course.id+':'+track.laps):undefined);
+  const conditions=mode==='test'?DEFAULT_CONDITIONS:selectedConditions();
+  view.reset(track,conditions);
+  race=new Race(track,mode,mode==='trial'?storedRun(recordKey(course.id,track.laps,conditions)):undefined,conditions);
   sound.resetCrowd();sound.unlock();
   el('courseLabel').textContent=course.name.toUpperCase();
   el('pauseExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
   el('resultExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
   countdown='';lastSignal='';accumulator=0;
+  el('race').classList.remove('finish-shot');
   hud(race);
   show('race');
+}
+type PodiumEntry={label:string; time:number; current:boolean; color:string};
+const riderColors=['#d32a3c','#56bcb6','#ffc35d','#8c91e8'];
+function showPodium(entries:PodiumEntry[]){
+  const winner=entries[0]?.time??0;
+  el('podium').replaceChildren(...[1,0,2].map(index=>{
+    const entry=entries[index];
+    const step=document.createElement('div');
+    step.className='podium-step rank-'+(index+1);
+    step.style.setProperty('--rider-color',entry?.color??'#999');
+    if(entry){
+      const rider=document.createElement('div');
+      rider.className='podium-rider';
+      rider.setAttribute('aria-hidden','true');
+      const label=document.createElement('b');
+      label.textContent=entry.label;
+      const time=document.createElement('small');
+      time.textContent=clock(entry.time)+(index?' · +'+(entry.time-winner).toFixed(2)+' s':'');
+      step.append(rider,label,time);
+      if(entry.current)step.classList.add('current');
+    }
+    const place=document.createElement('strong');
+    place.className='podium-rank';
+    place.textContent=String(index+1);
+    step.append(place);
+    return step;
+  }));
+  el('podium').hidden=!entries.length;
 }
 function endRace(finished:Race){
   el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':mode==='trial'?'Time Trial':'Test Ride');
   el('resultTime').textContent=clock(finished.elapsed);
   let title='Run complete',detail='Course cleared';
+  let podium:PodiumEntry[]=[];
   if(mode==='rival'){
     title=['1st place','2nd place','3rd place','4th place'][finished.position-1];
     detail='Position '+finished.position+' / '+(finished.rivals.length+1);
+    const origin=finished.rider.finish-finished.elapsed;
+    podium=finished.finishOrder.slice(0,3).map(({index,time})=>({
+      label:index?'Rival '+index:'You',time:time-origin,current:index===0,color:riderColors[index]
+    }));
   }
   if(mode==='trial'){
     const time=finished.elapsed, target=course.gold*finished.track.laps;
-    const key=course.id+':'+finished.track.laps;
+    const key=recordKey(course.id,finished.track.laps,finished.conditions);
     const best=storedRun(key);
+    podium=[{label:'This run',time,current:true,color:riderColors[0]},
+      ...pastTimes(key,best?.time).map((previous,index)=>({
+        label:index?'Previous run':'Previous best',time:previous,current:false,color:'#698ea0'
+      }))].sort((a,b)=>a.time-b.time);
+    const history=podium.slice(0,2).map(entry=>entry.time);
+    histories.set(key,history);
+    save('podium:v1:'+key,history);
     const medal=time<=target?'Gold':time<=target*1.16?'Silver':time<=target*1.36?'Bronze':'No';
     title=medal==='No'?'Finish':medal+' medal';
     if(!best||time<best.time){
@@ -270,6 +357,9 @@ function endRace(finished:Race){
     row.textContent='Lap '+(i+1)+' · '+clock(lap)+(lap===fastest?'  ★':'');
     return row;
   }));
+  showPodium(podium);
+  if(podium.length&&!podium.some(entry=>entry.current))el('resultDetail').classList.add('outside-podium');
+  else el('resultDetail').classList.remove('outside-podium');
   el('resultTitle').textContent=title;
   el('resultDetail').textContent=detail;
   sound.beep(784,0.36);
@@ -365,7 +455,7 @@ raceScreen.addEventListener('touchstart',e=>{
 raceScreen.addEventListener('gesturestart',e=>{if(e.cancelable)e.preventDefault();},{passive:false});
 raceScreen.addEventListener('wheel',e=>{if(e.ctrlKey&&e.cancelable)e.preventDefault();},{passive:false});
 function press(id:string,action:Action){
-  if(screen!=='race'||held.has(id))return;
+  if(screen!=='race'||race?.rider.finish||held.has(id))return;
   sound.unlock();
   held.set(id,action);
   if(action==='up')race?.moveLane(-1);
@@ -534,6 +624,7 @@ function loop(now:number){
     hud(race);
     sound.update(race);
     if(race.done)endRace(race);
+    else if(race.rider.finish&&!el('race').classList.contains('finish-shot')){el('race').classList.add('finish-shot');clearInput();}
   }
   if(screen!=='error'&&screen!=='intro'&&!(screen==='rotate'&&rotationReturn==='intro'))view?.frame(dt,race,race?.done?1:clamp(accumulator/DT,0,1));
   requestAnimationFrame(loop);

@@ -1,4 +1,5 @@
 import {LANES, Track, blend, clamp, type Surface} from './tracks';
+import {DEFAULT_CONDITIONS, wetness, type Conditions} from './conditions';
 export {COURSES, LANES, PIECES, Track, WIDTH, blend, clamp} from './tracks';
 export type {Course, Piece} from './tracks';
 export const DT=1/120;
@@ -8,6 +9,8 @@ export const RECORDED_CRASH_TIME=1.38;
 export interface Controls { gas: boolean; brake: boolean; turbo: boolean; pitch: number }
 export type Mode = 'trial' | 'rival' | 'test';
 export type Feedback = 'Clean landing' | 'Rough landing' | 'Wipeout' | 'Loop-out' | 'Overheated' | 'Cooling' | 'Contact' | 'Bump' | 'Bump crash' | 'Dirt trap crash' | `Lap ${number}`;
+export type CrowdKind = 'gasp' | 'landing' | 'pass' | 'lap' | 'finish';
+export interface CrowdEvent {kind:CrowdKind; x:number; serial:number; time:number}
 export enum CrashKind { None, Back, Front, Side }
 export interface Bike {
   x: number; y: number; z: number; vy: number; speed: number; lane: number; pitch: number;
@@ -38,10 +41,12 @@ export class Race {
   private lastGateTime=0;
   get elapsed(){return this.gateTime===null?0:Math.max(0,(this.rider.finish||this.time)-this.gateTime);}
   done = false;
-  crowd:{kind:'cheer'|'gasp'; x:number; serial:number}|undefined;
+  readonly crowd:CrowdEvent[]=[];
+  private readonly reactionAt=new Map<CrowdKind,number>();
+  private readonly passedRivals=new Set<Bike>();
   private crowdSerial=0;
   readonly inputs = {gas:false, brake:false, turbo:false, pitch:0};
-  constructor(readonly track: Track, readonly mode: Mode, readonly ghost: RecordRun | undefined) {
+  constructor(readonly track: Track, readonly mode: Mode, readonly ghost: RecordRun | undefined, readonly conditions:Conditions=DEFAULT_CONDITIONS) {
     this.startX=track.circuit?-6:5;
     this.gateTime=track.circuit?null:0;
     this.rider = newBike(this.startX,2);
@@ -52,6 +57,10 @@ export class Race {
   }
   get position() { return 1+this.rivals.filter(r=>this.rider.finish ?
     r.finish>0&&r.finish<this.rider.finish : r.x>this.rider.x).length; }
+  get finishOrder(){
+    return [this.rider,...this.rivals].map((bike,index)=>({index,time:bike.finish}))
+      .filter(entry=>entry.time>0).sort((a,b)=>a.time-b.time||a.index-b.index);
+  }
   get lap() {return Math.min(this.track.laps,this.splits.length+1);}
   moveLane(dir:number) {
     if(!this.done && !this.rider.crash)this.rider.lane=clamp(this.rider.lane+dir,0,3);
@@ -60,14 +69,18 @@ export class Race {
     this.feedback=event;
     this.feedbackTime=event==='Overheated'?2.3:event.startsWith('Lap ')?1.3:0.8;
   }
-  private react(kind:'cheer'|'gasp',x:number){
-    this.crowd={kind,x,serial:++this.crowdSerial};
+  private react(kind:CrowdKind,x:number){
+    const cooldown=kind==='pass'?2.2:kind==='landing'||kind==='gasp'?0.85:0;
+    if(this.time-(this.reactionAt.get(kind)??-Infinity)<cooldown)return;
+    this.reactionAt.set(kind,this.time);
+    this.crowd.push({kind,x,serial:++this.crowdSerial,time:this.time});
+    if(this.crowd.length>12)this.crowd.shift();
   }
   private fall(b:Bike, kind:CrashKind, player:boolean) {
     b.crash=CRASH_TIME;b.crashKind=kind;b.air=false;b.vy=0;b.wheelie=0;
     b.speed*=kind===CrashKind.Side?0.40:0.33;
     b.impact=1;
-    this.react('gasp',b.x);
+    if(player||Math.abs(this.track.delta(b.x,this.rider.x))<20)this.react('gasp',b.x);
     if(player)this.signal(kind===CrashKind.Back?'Loop-out':'Wipeout');
   }
   private contact(a:Bike,b:Bike) {
@@ -94,12 +107,22 @@ export class Race {
     this.time+=dt;
     this.feedbackTime=Math.max(0,this.feedbackTime-dt);
     if(this.time<0)return;
-    const oldX=this.rider.x;
+    const oldX=this.rider.x, alreadyFinished=!!this.rider.finish;
     const field=[this.rider,...this.rivals];
     field.forEach((b,i)=>Object.assign(this.previous[i],b));
     this.drive(this.rider,this.inputs,dt,true);
     for(const [i,bike] of this.rivals.entries())this.drive(bike,this.rivalInput(bike,i),dt,false);
     for(let i=0;i<field.length;i++)for(let j=i+1;j<field.length;j++)this.contact(field[i],field[j]);
+    if(this.mode==='rival'&&!alreadyFinished){
+      for(const rival of this.rivals){
+        if(rival.finish)continue;
+        const gap=this.rider.x-rival.x;
+        if(gap<-2)this.passedRivals.delete(rival);
+        if(gap>1.8&&gap<7&&oldX-this.previous[this.rivals.indexOf(rival)+1].x<=1.8&&!this.passedRivals.has(rival)){
+          this.passedRivals.add(rival);this.react('pass',this.rider.x);
+        }
+      }
+    }
     const marker=this.track.markers[this.splits.length];
     const crossedAt=(x:number)=>this.time-dt*clamp((this.rider.x-x)/Math.max(0.01,this.rider.x-oldX),0,1);
     if(this.gateTime===null&&this.rider.x>=0){
@@ -109,14 +132,18 @@ export class Race {
       const crossing=oldX>=marker?this.time:crossedAt(marker);
       this.splits.push(crossing-this.lastGateTime);
       this.lastGateTime=crossing;
-      this.react('cheer',marker);
+      if(this.splits.length===this.track.laps-1)this.react('lap',marker);
       if(this.splits.length<this.track.laps)this.signal(`Lap ${this.lap}`);
     }
-    if(this.tick++%6===0&&this.mode==='trial'){
+    if(this.tick++%6===0&&this.mode==='trial'&&!alreadyFinished){
       const {x,y,z,pitch,spin,crash,crashKind,lean,side}=this.rider;
       this.record.push([this.time,x,y,z,pitch,spin,crash*RECORDED_CRASH_TIME/CRASH_TIME,crashKind,lean,side].map(n=>+n.toFixed(3)) as Frame);
     }
-    if(this.rider.finish)this.done=true;
+    if(this.rider.finish){
+      if(!alreadyFinished)this.react('finish',this.track.end);
+      this.done=this.mode!=='rival'||this.time-this.rider.finish>=10||
+        (this.time-this.rider.finish>=1.15&&this.finishOrder.length>=3);
+    }
   }
   private rivalInput(b:Bike,i:number):Controls {
     const look=b.x+Math.max(7,b.speed*0.46);
@@ -171,15 +198,16 @@ export class Race {
       const cooling=ground==='cool', muddy=rough(ground);
       const turbo=input.turbo&&!input.brake&&!b.hot;
       this.updateHeat(b,turbo,cooling,dt,player);
-      const grip=[23,16,13,18,15][this.track.course.theme]*(muddy?0.62:1);
+      const wet=b.air?0:wetness(this.track,this.conditions,b.x,b.z,ground);
+      const grip=[23,16,13,18,15][this.track.course.theme]*(muddy?0.62:1)*(1-wet*0.26);
       const turnLimit=Math.sqrt(grip*laneRatio/Math.max(0.001,Math.abs(curve)));
-      const surfaceLimit=(turbo?32:23)*(ground==='mud'?0.61:ground==='rough'?0.69:ground==='trap'?0.66:1);
+      const surfaceLimit=(turbo?32:23)*(ground==='mud'?0.61:ground==='rough'?0.69:ground==='trap'?0.66:1)*(1-wet*(muddy?0.15:0.03));
       const limit=Math.min(surfaceLimit,turnLimit);
       if(!b.air){
-        const force=input.brake?-44:b.hot?-34:b.speed>limit?(muddy?-28:-12):(input.gas||input.turbo)?(turbo?19:13.8):-8.5;
+        const force=input.brake?-44*(1-wet*0.36):b.hot?-34:b.speed>limit?(muddy?-28:-12):(input.gas||input.turbo)?(turbo?19:13.8):-8.5;
         b.speed=clamp(b.speed+force*dt,0,33);
       }else if(input.brake)b.speed=Math.max(0,b.speed-4.5*dt);
-      const oldZ=b.z, lateralRate=b.air?1.65:muddy?5.6:10.4;
+      const oldZ=b.z, lateralRate=b.air?1.65:(muddy?5.6:10.4)*(1-wet*0.33);
       const steer=LANES[b.lane]-b.z;
       b.lean=blend(b.lean,clamp(steer*0.49-curve*b.speed*0.43,-0.43,0.43),Math.min(1,dt*13));
       if(b.speed>0.6)b.z+=clamp(steer,-lateralRate*dt,lateralRate*dt);
@@ -242,7 +270,7 @@ export class Race {
           else{
             if(error>0.35&&impact<-2.9){b.speed*=0.80;if(player)this.signal('Rough landing');}
             else if(impact<-4.3){
-              this.react('cheer',b.x);
+              if(error<0.23&&(player||Math.abs(this.track.delta(b.x,this.rider.x))<18))this.react('landing',b.x);
               if(player)this.signal('Clean landing');
             }
             b.pitch=angle;

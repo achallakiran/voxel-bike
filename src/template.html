@@ -21,10 +21,10 @@
   </section>
   <section id="home" class="screen home" hidden>
     <div class="title-plate">
-      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 06</div>
+      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 07</div>
       <h1>VOXEL<span>BIKES</span></h1>
     </div>
-    <div class="race-number" aria-hidden="true">06</div>
+    <div class="race-number" aria-hidden="true">07</div>
     <nav class="pit-board" aria-label="Main menu">
       <button data-mode="trial" class="pit-button"><span>01</span> Time Trial</button>
       <button data-mode="rival" class="pit-button"><span>02</span> Rival Race</button>
@@ -39,7 +39,9 @@
   <section id="select" class="screen overlay" hidden>
     <div class="panel select-panel">
       <div class="eyebrow">Redline Series / Course Select</div><h2 id="modeTitle">Time Trial</h2>
-      <label class="lap-setting">Laps <select id="lapSetting"><option value="3">3</option><option value="5">5</option><option value="7">7</option></select></label>
+      <div class="race-options"><label class="lap-setting">Laps <select id="lapSetting"><option value="3">3</option><option value="5">5</option><option value="7">7</option></select></label>
+      <label class="lap-setting">Light <select id="daylightSetting"><option>Morning</option><option selected>Noon</option><option>Evening</option><option>Night</option></select></label>
+      <label class="lap-setting">Weather <select id="weatherSetting"><option>Clear</option><option>Rain</option><option>Thunderstorm</option></select></label></div>
       <div id="courses" class="cards"></div>
       <button class="text-button" data-home>← Main menu</button>
     </div>
@@ -113,7 +115,7 @@
   <section id="results" class="screen overlay" hidden>
     <div class="panel compact">
       <div class="eyebrow" id="resultCourse"></div><h2 id="resultTitle">Finish</h2>
-      <div id="resultTime" class="result-time"></div><div id="resultDetail" class="result-detail"></div><ol id="lapResults" class="lap-results" aria-label="Lap times, star marks fastest"></ol>
+      <div id="resultTime" class="result-time"></div><div id="resultDetail" class="result-detail"></div><div id="podium" class="podium" aria-label="Race podium" hidden></div><ol id="lapResults" class="lap-results" aria-label="Lap times, star marks fastest"></ol>
       <div class="stack"><button id="retry" class="solid">Race again ↗</button><button id="resultExit" class="text-button">← Main menu</button></div>
     </div>
   </section>
