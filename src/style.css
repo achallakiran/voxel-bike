@@ -59,3 +59,7 @@ body{background:#3b2428}
 @media(max-height:470px){.home{gap:8px;padding-block:max(11px,env(safe-area-inset-top)) max(9px,env(safe-area-inset-bottom))}.title-plate{padding-block:8px 10px}.title-plate h1{font-size:clamp(37px,5.8vw,60px)}.pit-button{padding-block:7px;min-height:40px}.course-card{min-height:96px;padding:9px 7px}}
 @media(orientation:portrait){.home{grid-template-columns:1fr;grid-template-rows:auto 1fr auto auto;justify-items:center;padding: max(7vh,env(safe-area-inset-top)) 14px max(5vh,env(safe-area-inset-bottom));background:linear-gradient(0deg,#30171ed4,transparent 57%)}.title-plate{max-width:100%}.title-plate h1{font-size:clamp(40px,10vw,65px)}.pit-board{grid-row:3;width:min(100%,330px)}.pit-tools{grid-row:4}.race-number{display:none}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.course-card{min-height:100px}}
 @media(max-width:500px){.hud{gap:4px}.hud-right{gap:4px}.hud-chip{padding-inline:6px}.hud-middle{min-width:80px}.hud-right .square{width:37px}}
+
+.route-preview{display:block;width:min(100%,120px);height:clamp(30px,7vh,54px);overflow:visible}
+.route-preview polygon{fill:none;stroke:#fff4e6;stroke-width:2.2;stroke-linejoin:round}
+.route-preview circle{fill:#ff6978;stroke:#fff4e6;stroke-width:0.7}

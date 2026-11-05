@@ -23,6 +23,8 @@ function clock(value:number) {
 }
 class Sound {
   enabled=true;
+  private lastCrowd=0;
+  private crowdNoise?:AudioBuffer;
   private ctx?:AudioContext;
   private gain?:GainNode;
   private engine?:OscillatorNode;
@@ -40,8 +42,35 @@ class Sound {
       if(this.ctx.state!=='running')void this.ctx.resume().catch(()=>{});
     }catch{ /* Gameplay continues if audio is unavailable. */ }
   }
+  resetCrowd(){this.lastCrowd=0;}
+  private crowd(race:Race){
+    const reaction=race.crowd, ctx=this.ctx;
+    if(!reaction||reaction.serial===this.lastCrowd||!ctx)return;
+    this.lastCrowd=reaction.serial;
+    if(!this.enabled||ctx.state!=='running'||Math.abs(race.track.delta(reaction.x,race.rider.x))>22)return;
+    if(!this.crowdNoise){
+      this.crowdNoise=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*0.9),ctx.sampleRate);
+      const samples=this.crowdNoise.getChannelData(0);
+      let filtered=0;
+      for(let i=0;i<samples.length;i++){
+        filtered=filtered*0.72+(Math.random()*2-1)*0.28;
+        samples[i]=filtered;
+      }
+    }
+    const source=ctx.createBufferSource(), band=ctx.createBiquadFilter(), gain=ctx.createGain(), now=ctx.currentTime;
+    const cheer=reaction.kind==='cheer';
+    source.buffer=this.crowdNoise;
+    band.type='bandpass';band.Q.value=0.85;band.frequency.value=cheer?1050:660;
+    band.frequency.exponentialRampToValueAtTime(cheer?1490:430,now+0.45);
+    gain.gain.setValueAtTime(0.001,now);
+    gain.gain.exponentialRampToValueAtTime(cheer?0.13:0.10,now+0.075);
+    gain.gain.exponentialRampToValueAtTime(0.001,now+0.82);
+    source.connect(band).connect(gain).connect(ctx.destination);
+    source.start();
+  }
   update(race:Race|undefined){
     if(!this.ctx||!this.engine||!this.gain||!this.filter)return;
+    if(race)this.crowd(race);
     const bike=race?.rider;
     const running=this.enabled&&bike&&!race.done&&race.time>0;
     const now=this.ctx.currentTime;
@@ -60,14 +89,14 @@ class Sound {
     o.connect(g).connect(this.ctx.destination);o.start();o.stop(now+duration);
   }
 }
-interface Draft {format:'voxel-bikes-track';version:1;name:string;theme:number;layout:Piece[]}
-const defaultDraft:Draft={format:'voxel-bikes-track',version:1,name:'My Track',theme:0,
+interface Draft {format:'voxel-bikes-track';version:1;name:string;theme:number;layout:Piece[];loop?:boolean}
+const defaultDraft:Draft={format:'voxel-bikes-track',version:1,name:'My Track',theme:0,loop:true,
   layout:['tabletop','cool','rollers','mud','double','straight']};
 function validDraft(value:unknown):value is Draft {
   if(!value||typeof value!=='object')return false;
   const d=value as Draft;
   return d.format==='voxel-bikes-track'&&d.version===1&&typeof d.name==='string'&&d.name.length<=36&&
-    Number.isInteger(d.theme)&&d.theme>=0&&d.theme<=4&&Array.isArray(d.layout)&&d.layout.length<=28&&
+    (d.loop===undefined||typeof d.loop==='boolean')&&Number.isInteger(d.theme)&&d.theme>=0&&d.theme<=4&&Array.isArray(d.layout)&&d.layout.length<=28&&
     d.layout.every(p=>typeof p==='string'&&Object.hasOwn(PIECES,p));
 }
 let draft=load('draft',defaultDraft);
@@ -87,13 +116,14 @@ const settings=load<{sound:boolean;quality:boolean;camera?:number}>('settings',{
 let cameraIndex:CameraIndex=0;
 const nameInput=el<HTMLInputElement>('trackName');
 const themeInput=el<HTMLSelectElement>('theme');
+const shapeInput=el<HTMLSelectElement>('trackShape');
 const fileInput=el<HTMLInputElement>('fileInput');
 const runRecords=new Map<string,RecordRun>();
 let view:View|undefined;
 let countdown='', lastSignal='';
 function storedRun(id:string) {
   if(runRecords.has(id))return runRecords.get(id);
-  const r=load<RecordRun|null>('best:v3:'+id,null);
+  const r=load<RecordRun|null>('best:v4:'+id,null);
   if(r&&Number.isFinite(r.time)&&r.time>0&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===10&&f.every(Number.isFinite))){
     runRecords.set(id,r);return r;
   }
@@ -121,6 +151,17 @@ function home(){
   race=undefined;
   show('home');
 }
+const coursePreviews=COURSES.map(course=>{
+  const track=new Track(course);
+  const points=Array.from({length:128},(_,i)=>track.pose(i*track.lapLength/128));
+  const minX=Math.min(...points.map(p=>p.x)),maxX=Math.max(...points.map(p=>p.x));
+  const minZ=Math.min(...points.map(p=>p.z)),maxZ=Math.max(...points.map(p=>p.z));
+  const zoom=Math.min(84/(maxX-minX),35/(maxZ-minZ));
+  const plot=(p:{x:number;z:number})=>[(50+(p.x-(minX+maxX)/2)*zoom).toFixed(1),(23+(p.z-(minZ+maxZ)/2)*zoom).toFixed(1)].join(',');
+  const [startX,startY]=plot(points[0]).split(',');
+  return {length:track.lapLength,diagram:'<svg class="route-preview" viewBox="0 0 100 46" aria-hidden="true"><polygon points="'+
+    points.map(plot).join(' ')+'"/><circle cx="'+startX+'" cy="'+startY+'" r="2.4"/></svg>'};
+});
 function choose(next:Mode){
   mode=next;
   el('modeTitle').textContent=mode==='trial'?'Time Trial':'Rival Race';
@@ -128,7 +169,8 @@ function choose(next:Mode){
     const b=document.createElement('button');b.className='course-card';
     b.style.setProperty('--card',['#b42630','#925557','#713538','#c02430','#b48580'][i]);
     const best=mode==='trial'?storedRun(c.id):undefined;
-    b.innerHTML='<span class="card-index">0'+(i+1)+'</span><b>'+c.name+'</b><span>'+c.tagline+'</span>'+
+    const preview=coursePreviews[i];
+    b.innerHTML='<span class="card-index">0'+(i+1)+' · '+preview.length+' M</span>'+preview.diagram+'<b>'+c.name+'</b><span>'+c.tagline+'</span>'+
       '<small>'+(next==='trial'?'QUALIFY '+clock(c.gold*1.29):'2 LAPS')+
       (best?' · BEST '+clock(best.time):'')+'</small>';
     b.addEventListener('click',()=>start(c));return b;
@@ -141,7 +183,7 @@ function start(c:Course){
   const track=new Track(course,mode==='rival'?2:1);
   view.reset(track);
   race=new Race(track,mode,mode==='trial'?storedRun(course.id):undefined);
-  sound.unlock();
+  sound.resetCrowd();sound.unlock();
   el('courseLabel').textContent=course.name.toUpperCase();
   el('pauseExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
   el('resultExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
@@ -166,7 +208,7 @@ function endRace(finished:Race){
     if(!best||time<best.time){
       const run={time,frames:finished.record};
       runRecords.set(course.id,run);
-      const saved=save('best:v3:'+course.id,run);
+      const saved=save('best:v4:'+course.id,run);
       detail=saved?'New personal best · Ghost saved':'New personal best · Ghost available this session';
     }else detail='Personal best '+clock(best.time)+' · +'+(time-best.time).toFixed(2)+' s';
     detail+=' · '+(time<=course.gold*1.29?'Qualified':'Target '+clock(course.gold*1.29));
@@ -184,7 +226,7 @@ function hud(r:Race){
   el('timeLabel').textContent=r.mode==='rival'?'P'+r.position+' / '+(r.rivals.length+1):'TIME';
   el('time').textContent=clock(r.time);
   el('lap').textContent=r.track.laps>1?' · '+r.lap+'/'+r.track.laps:'';
-  setFill('progress',clamp((r.rider.x-5)/(r.track.end-5)*100,0,100));
+  setFill('progress',clamp((r.rider.x-r.startX)/(r.track.end-r.startX)*100,0,100));
   setFill('heat',r.rider.heat);
   const heatLabel=el('heatLabel'), label=r.rider.hot?'ENGINE CUT':'ENGINE HEAT';
   if(heatLabel.textContent!==label)heatLabel.textContent=label;
@@ -326,6 +368,7 @@ function commitDraft(message='',scroll=false){
 function showBuilder(){
   nameInput.value=draft.name;
   themeInput.value=String(draft.theme);
+  shapeInput.value=draft.loop?'loop':'straight';
   renderDraft();show('builder');
 }
 for(const piece of Object.keys(PIECES) as Piece[]){
@@ -341,6 +384,7 @@ for(const piece of Object.keys(PIECES) as Piece[]){
 }
 nameInput.addEventListener('input',()=>{draft={...draft,name:nameInput.value};commitDraft();});
 themeInput.addEventListener('change',()=>{draft={...draft,theme:Number(themeInput.value)};commitDraft();});
+shapeInput.addEventListener('change',()=>{draft={...draft,loop:shapeInput.value==='loop'};commitDraft();});
 function movePiece(dir:number){
   const dest=selected+dir;
   if(selected<0||dest<0||dest>=draft.layout.length)return;
@@ -357,7 +401,7 @@ button('remove',()=>{
 button('testTrack',()=>{
   if(!draft.layout.length)return;
   mode='test';
-  start({id:'custom',name:draft.name.trim()||'My Track',theme:draft.theme,tagline:'',gold:0,layout:[...draft.layout]});
+  start({id:'custom',name:draft.name.trim()||'My Track',theme:draft.theme,tagline:'',gold:0,loop:draft.loop,layout:[...draft.layout]});
 });
 button('export',()=>{
   const url=URL.createObjectURL(new Blob([JSON.stringify(draft,null,2)],{type:'application/json'}));
@@ -421,7 +465,7 @@ function loop(now:number){
     sound.update(race);
     if(race.done)endRace(race);
   }
-  if(screen!=='error')view?.frame(dt,race);
+  if(screen!=='error')view?.frame(dt,race,race?.done?1:clamp(accumulator/DT,0,1));
   requestAnimationFrame(loop);
 }
 try{

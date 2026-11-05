@@ -1,3 +1,4 @@
+import {Circuit,type TrackPose} from './circuit';
 export const LANES = [-3.6, -1.2, 1.2, 3.6];
 export const WIDTH = 9.6;
 export const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -43,44 +44,90 @@ export type Piece = keyof typeof PIECES;
 export const pieceSpec = (piece: Piece): PieceSpec => PIECES[piece];
 export interface Course {
   id: string; name: string; theme: number; tagline: string; gold: number; layout: Piece[];
+  loop?: boolean;
 }
 export const COURSES: Course[] = [
-  {id:'clay', name:'Clay Circuit', theme:0, tagline:'Wheelies · Coolant lines', gold:13.2,
-    layout:['bumpNear','rise','coolNear','bumpFar','hop','roughFar','tabletop','coolFar','trapOdd','trapEven','roughAll','double','bumpNear','straight']},
-  {id:'quarry', name:'Quarry Drop', theme:1, tagline:'Long jumps · Steep landings', gold:15.25,
-    layout:['lowdeck','launch','catch','coolFar','drop','crest','coolNear','massif','roughNear','steep','catch','double','trapOdd','straight']},
-  {id:'fair', name:'Mud Fair', theme:2, tagline:'Wet ruts · Narrow clean lines', gold:15.8,
-    layout:['mud','bumpNear','trapOdd','trapEven','coolFar','roughFar','roughNear','rollers','mud','roughAll','coolNear','bumpFar','rise','straight']},
-  {id:'foundry', name:'Redline Foundry', theme:3, tagline:'Raised launch · Cooling slalom', gold:15.6,
-    layout:['split','catch','trapOdd','trapEven','coolNear','split','lowdeck','roughNear','bumpFar','split','crest','coolFar','super','straight']},
-  {id:'ridge', name:'White Ridge', theme:4, tagline:'Compound hills · Final slalom', gold:14.65,
-    layout:['massif','coolFar','launch','catch','roughAll','bumpNear','super','crest','rise','coolNear','massif','trapOdd','trapEven','bumpFar','straight']},
+  {id:'clay', name:'Clay Circuit', theme:0, tagline:'Stadium oval · Banked ends', gold:22.2, loop:true,
+    layout:['bumpNear','rise','coolNear','bumpFar','hop','roughFar','tabletop','coolFar','trapOdd','trapEven','straight','rollers','lowdeck','double','bumpNear','coolNear','roughAll','rise','bumpFar','tabletop','straight']},
+  {id:'quarry', name:'Quarry Drop', theme:1, tagline:'Quarry switchback · Steep landings', gold:24.6, loop:true,
+    layout:['lowdeck','launch','catch','coolFar','drop','crest','coolNear','massif','roughNear','lowdeck','straight','steep','catch','double','trapOdd','roughFar','rollers','drop','coolFar','crest','straight','massif','straight']},
+  {id:'fair', name:'Mud Fair', theme:2, tagline:'Figure eight · Wet racing lines', gold:26.1, loop:true,
+    layout:['mud','bumpNear','trapOdd','trapEven','coolFar','roughFar','roughNear','rollers','mud','roughAll','coolNear','lowdeck','straight','bumpFar','rise','coolFar','mud','roughNear','bumpNear','trapOdd','roughAll','mud','straight']},
+  {id:'foundry', name:'Redline Foundry', theme:3, tagline:'Industrial loop · Split racing lines', gold:26.4, loop:true,
+    layout:['split','catch','trapOdd','trapEven','coolNear','split','lowdeck','roughNear','bumpFar','double','straight','coolFar','split','crest','super','catch','trapOdd','coolNear','split','lowdeck','rollers','straight']},
+  {id:'ridge', name:'White Ridge', theme:4, tagline:'Ridge circuit · Sweepers and crests', gold:28.5, loop:true,
+    layout:['massif','coolFar','launch','catch','roughAll','bumpNear','super','crest','rise','coolNear','massif','trapOdd','trapEven','bumpFar','drop','roughFar','lowdeck','catch','straight','massif','coolNear','drop','roughNear','straight','rollers','straight']},
 ];
 export interface Segment { piece: Piece; x: number; end: number; index: number }
 export class Track {
   readonly segments: Segment[] = [];
   readonly markers: number[] = [];
-  end = 20;
+  readonly circuit?: Circuit;
+  readonly lapLength: number;
+  readonly end: number;
   constructor(readonly course: Course, readonly laps = 1) {
-    this.add('straight', 0, this.end, -1);
-    for (let lap=0; lap<laps; lap++) {
-      for (const [index, piece] of course.layout.entries()) {
-        const end = this.end + PIECES[piece].length;
-        this.add(piece, this.end, end, index);
-        this.end = end;
-      }
-      this.markers.push(this.end);
-      if (lap+1<laps) {
-        this.add('straight',this.end,this.end+15,-1);
-        this.end+=15;
-      }
+    let distance=course.loop?32:20;
+    this.add('straight',0,distance,-1);
+    for(const [index,piece] of course.layout.entries()){
+      const next=distance+PIECES[piece].length;
+      this.add(piece,distance,next,index);
+      distance=next;
     }
-    this.add('straight', this.end, this.end + 42, -1);
+    if(course.loop&&distance<320){
+      this.add('straight',distance,320,-1);
+      distance=320;
+    }
+    this.lapLength=distance;
+    if(course.loop){
+      this.circuit=new Circuit(course.theme,distance);
+      for(let lap=1;lap<=laps;lap++)this.markers.push(distance*lap);
+      this.end=distance*laps;
+    }else{
+      this.markers.push(distance);
+      for(let lap=1;lap<laps;lap++){
+        this.add('straight',distance,distance+15,-1);
+        distance+=15;
+        for(const [index,piece] of course.layout.entries()){
+          const next=distance+PIECES[piece].length;
+          this.add(piece,distance,next,index);
+          distance=next;
+        }
+        this.markers.push(distance);
+      }
+      this.end=distance;
+      this.add('straight',distance,distance+42,-1);
+    }
+  }
+  local(distance:number){
+    return this.circuit?((distance%this.lapLength)+this.lapLength)%this.lapLength:distance;
+  }
+  delta(a:number,b:number){
+    const d=a-b;
+    return this.circuit?this.local(d+this.lapLength/2)-this.lapLength/2:d;
+  }
+  pose(distance:number,lateral=0):TrackPose{
+    return this.circuit?.sample(distance,lateral)??{x:distance,z:lateral,y:0,fx:1,fz:0,curvature:0};
+  }
+  bank(curvature:number){
+    const strength=[5.8,2.5,0.8,2.8,-1.2][this.course.theme];
+    return clamp(-curvature*strength,-0.28,0.28);
+  }
+  clearOfOtherRoad(distance:number,lateral:number,radius:number,height:number){
+    if(!this.circuit)return true;
+    const prop=this.pose(distance,lateral);
+    for(let s=0;s<this.lapLength;s+=4){
+      if(Math.abs(this.delta(s,distance))<12)continue;
+      const road=this.pose(s);
+      if(Math.abs(road.y-(prop.y+height))>4.6)continue;
+      if(Math.hypot(prop.x-road.x,prop.z-road.z)<radius+6.7)return false;
+    }
+    return true;
   }
   private add(piece: Piece, x: number, end: number, index: number) {
     this.segments.push({piece, x, end, index});
   }
   section(x: number) {
+    x=this.local(x);
     let lo=0, hi=this.segments.length-1;
     while(lo<hi){
       const mid=(lo+hi)>>>1;
@@ -99,6 +146,7 @@ export class Track {
     return points.map(t=>blend(s.x,s.end,t));
   }
   height(x: number, z: number) {
+    x=this.local(x);
     const s=this.section(x), spec=pieceSpec(s.piece), t=clamp((x-s.x)/(s.end-s.x),0,1);
     const u=t*(spec.shape.length-1), i=Math.min(spec.shape.length-2,Math.floor(u));
     const profile=blend(spec.shape[i],spec.shape[i+1],u-i);
@@ -111,12 +159,14 @@ export class Track {
         bump=0.24*edge*clamp(Math.min(t-from,to-t)/((to-from)*0.28),0,1);
       }
     }
-    return profile*split+bump;
+    const p=this.pose(x);
+    return p.y+this.bank(p.curvature)*z+profile*split+bump;
   }
   slope(x: number, z: number, wheelbase = 1.8) {
     return Math.atan2(this.height(x+wheelbase/2,z)-this.height(x-wheelbase/2,z),wheelbase);
   }
   surface(x: number, z: number): Surface {
+    x=this.local(x);
     const s=this.section(x);
     const t=(x-s.x)/(s.end-s.x);
     const lane=clamp(Math.round((z-LANES[0])/2.4),0,3);

@@ -87,12 +87,15 @@ function makeRider(scene:T.Scene,color:number,ghost=false):RiderView {
 }
 type Block = [number,number,number,number,number,number,number];
 const decorationMaterial = new T.MeshStandardMaterial({roughness:0.92});
-function batch(scene:T.Object3D,blocks:Block[]) {
+function batch(scene:T.Object3D,blocks:Block[],track?:Track) {
   if (!blocks.length) return;
   const mesh=new T.InstancedMesh(cube,decorationMaterial,blocks.length);
   const obj=new T.Object3D(), color=new T.Color();
   blocks.forEach(([x,y,z,w,h,d,c],i)=>{
-    obj.position.set(x,y,z);obj.scale.set(w,h,d);obj.updateMatrix();
+    const p=track?.pose(x,z);
+    obj.position.set(p?.x??x,y,p?.z??z);
+    obj.rotation.y=p?-Math.atan2(p.fz,p.fx):0;
+    obj.scale.set(w,h,d);obj.updateMatrix();
     mesh.setMatrixAt(i,obj.matrix);mesh.setColorAt(i,color.setHex(c));
   });
   mesh.computeBoundingSphere(); scene.add(mesh);
@@ -202,6 +205,56 @@ class TitleTrack {
     renderer.render(this.scene,this.camera);
   }
 }
+class RaceCrowd {
+  readonly group=new T.Group();
+  private readonly arms:T.InstancedMesh;
+  private readonly fans:{x:number;y:number;z:number;side:number;phase:number;color:number}[]=[];
+  private readonly pose=new T.Object3D();
+  private response=0;
+  private mood:'cheer'|'gasp'='cheer';
+  constructor(readonly distance:number,track:Track,rng:()=>number){
+    const colors=[0xe74b4c,0xf4c8a1,0x427d83,0xd79c50,0x785a97,0xe9dac5];
+    const p=track.pose(distance,-11.4);
+    this.group.position.set(p.x,p.y,p.z);
+    this.group.rotation.y=-Math.atan2(p.fz,p.fx);
+    const blocks:Block[]=[];
+    for(let row=0;row<3;row++){
+      const y=0.64+row*0.62,z=-row*0.9;
+      blocks.push([0,y-0.40,z,8.9,0.6+row*0.32,0.91, row%2?0xa76a60:0xbf8472]);
+      for(let i=0;i<9;i++){
+        if(rng()<0.13)continue;
+        const x=(i-4)*0.95+(rng()-0.5)*0.16,color=colors[Math.floor(rng()*colors.length)];
+        blocks.push([x,y,z,0.42,0.48,0.38,color],[x,y+0.37,z,0.27,0.27,0.28,rng()<0.55?0xc18968:0x8f5d4a]);
+        const phase=rng()*Math.PI*2;
+        for(const side of [-1,1])this.fans.push({x,y:y+0.05,z,side,phase,color});
+      }
+    }
+    batch(this.group,blocks);
+    this.arms=new T.InstancedMesh(cube,decorationMaterial,this.fans.length);
+    this.fans.forEach((fan,i)=>this.arms.setColorAt(i,new T.Color(fan.color)));
+    this.arms.frustumCulled=false;
+    this.group.add(this.arms);
+    this.update(0,0,0,true);
+  }
+  react(kind:'cheer'|'gasp',strength:number){
+    this.mood=kind;this.response=Math.max(this.response,strength);
+  }
+  update(time:number,dt:number,near:number,visible:boolean){
+    this.response=Math.max(0,this.response-dt*0.57);
+    if(!visible)return;
+    this.fans.forEach((fan,i)=>{
+      const beat=Math.sin(time*7+fan.phase);
+      const cheer=this.mood==='cheer'?this.response:0;
+      const gasp=this.mood==='gasp'?this.response:0;
+      const lift=clamp(0.30+near*(0.58+beat*0.29)+cheer*(0.83+beat*0.32)-gasp*0.21,0.10,1.70);
+      this.pose.position.set(fan.x+fan.side*(0.21+lift*0.057-gasp*0.065),fan.y+lift*0.16,fan.z+gasp*0.20);
+      this.pose.rotation.set(gasp*1.1,0,fan.side*(0.41-lift*0.71-gasp*0.76));
+      this.pose.scale.set(0.13,0.40,0.15);this.pose.updateMatrix();
+      this.arms.setMatrixAt(i,this.pose.matrix);
+    });
+    this.arms.instanceMatrix.needsUpdate=true;
+  }
+}
 export class View {
   private scene = new T.Scene();
   private camera = new T.PerspectiveCamera(33,1,0.15,170);
@@ -215,6 +268,8 @@ export class View {
   private renderer: T.WebGLRenderer;
   private world=new T.Group();
   private riders:RiderView[]=[];
+  private crowds:RaceCrowd[]=[];
+  private crowdSerial=0;
   private dust:T.InstancedMesh;
   private particles:{x:number;y:number;z:number;life:number;size:number;color:number}[]=[];
   private track!:Track;
@@ -239,6 +294,7 @@ export class View {
     this.track=track;
     this.world.traverse(o=>{if (o instanceof T.InstancedMesh) o.dispose(); else if(o instanceof T.Mesh && o.geometry !== cube) { o.geometry.dispose(); o.material.map?.dispose(); o.material.dispose(); }});
     this.world.clear();
+    this.crowds=[];this.crowdSerial=0;
     for(const r of this.riders) {
       this.scene.remove(r.root,r.shadow);
       r.shadow.material.dispose();
@@ -249,11 +305,18 @@ export class View {
     this.scene.background=new T.Color(palette.sky);this.scene.fog=new T.Fog(palette.fog,30,125);
     const rng=seeded(632+track.course.theme);
     const meshMaterial=new T.MeshStandardMaterial({vertexColors:true,roughness:1,side:T.DoubleSide});
-    for(let start=-30;start<track.end+44;start+=38){
-      const stop=Math.min(start+38,track.end+44);
+    const loop=!!track.circuit;
+    const limit=loop?track.lapLength:track.end+44;
+    if(track.circuit)box(this.world,palette.grass,0,track.circuit.floor-0.48,45,1050,0.7,1050);
+    for(let start=loop?0:-30;start<limit;start+=38){
+      const stop=Math.min(start+38,limit);
       const vertices:number[]=[], colors:number[]=[], blocks:Block[]=[];
       const color=new T.Color();
-      const block=(x:number,y:number,z:number,w:number,h:number,d:number,c:number)=>blocks.push([x,y,z,w,h,d,c]);
+      const block=(x:number,y:number,z:number,w:number,h:number,d:number,c:number)=>{
+        if(loop&&Math.abs(z)>5.7&&!track.clearOfOtherRoad(x,z,Math.hypot(w,d)*0.50,y))return;
+        const height=loop&&Math.abs(z)>5.7?y+track.pose(x).y:y;
+        blocks.push([x,height,z,w,h,d,c]);
+      };
       const breaks=[start,stop];
       for(let x=start+1.3;x<stop;x+=1.3) breaks.push(x);
       for(const s of track.segments) {
@@ -261,7 +324,10 @@ export class View {
         breaks.push(...track.boundaries(s).filter(x=>x>start&&x<stop));
       }
       breaks.sort((a,b)=>a-b);
-      function vertex(x:number,y:number,z:number) { vertices.push(x,y,z);colors.push(color.r,color.g,color.b); }
+      function vertex(x:number,y:number,z:number) {
+        const p=track.pose(x,z);
+        vertices.push(p.x,y,p.z);colors.push(color.r,color.g,color.b);
+      }
       for(let i=0;i<breaks.length-1;i++){
         const a=breaks[i],b=breaks[i+1];
         if(b-a<0.0001) continue;
@@ -275,17 +341,39 @@ export class View {
           vertex(a,track.height(a,z0),z0);vertex(a,track.height(a,z1),z1);vertex(b,track.height(b,z0),z0);
           vertex(a,track.height(a,z1),z1);vertex(b,track.height(b,z1),z1);vertex(b,track.height(b,z0),z0);
         }
+        if(loop){
+          for(const z of [-WIDTH/2,WIDTH/2]){
+            color.setHex(palette.soil);
+            const ha=track.height(a,z),hb=track.height(b,z);
+            const floor=track.circuit!.floor;
+            const bridge=track.course.theme===2;
+            const depth=bridge?0.66:0.95;
+            const da=Math.max(floor,ha-depth),db=Math.max(floor,hb-depth);
+            vertex(a,ha,z);vertex(a,da,z);vertex(b,hb,z);
+            vertex(a,da,z);vertex(b,db,z);vertex(b,hb,z);
+            if(!bridge){
+              const sa=z+Math.sign(z)*Math.min(8,2.1+ha-floor),sb=z+Math.sign(z)*Math.min(8,2.1+hb-floor);
+              color.setHex(palette.rock).multiplyScalar(0.83);
+              vertex(a,da,z);vertex(a,floor,sa);vertex(b,db,z);
+              vertex(a,floor,sa);vertex(b,floor,sb);vertex(b,db,z);
+            }
+          }
+        }
       }
       const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(vertices,3));
       g.setAttribute('color',new T.Float32BufferAttribute(colors,3));g.computeVertexNormals();
       this.world.add(new T.Mesh(g,meshMaterial.clone()));
-      block((start+stop)/2,-1.14,1.5,stop-start,0.85,41,palette.grass);
-      block((start+stop)/2,-1.53,-22,stop-start,0.85,9,palette.far);
+      if(!loop){
+        block((start+stop)/2,-1.14,1.5,stop-start,0.85,41,palette.grass);
+        block((start+stop)/2,-1.53,-22,stop-start,0.85,9,palette.far);
+      }
       for(let x=start;x<stop;x+=1.9){
         for(const sign of [-1,1]){
           const top=track.height(x,sign*4.8);
-          block(x,top/2-0.49,sign*5.05,1.94,top+0.99,0.62,palette.soil);
-          block(x,top*0.31-0.5,sign*5.52,1.97,top*0.62+0.96,0.34,palette.rock);
+          if(!loop){
+            block(x,top/2-0.49,sign*5.05,1.94,top+0.99,0.62,palette.soil);
+            block(x,top*0.31-0.5,sign*5.52,1.97,top*0.62+0.96,0.34,palette.rock);
+          }
           block(x,top+0.035,sign*4.81,1.2,0.085,0.18,Math.floor(x/1.9)%2?palette.trim:0xb42332);
         }
         for(let l=0;l<4;l++){
@@ -309,6 +397,16 @@ export class View {
           }
         }
       }
+      if(track.circuit&&track.course.theme===2){
+        for(let x=start+5;x<stop;x+=8){
+          const top=track.pose(x).y-0.65,bottom=track.circuit.floor;
+          for(const z of [-3.3,3.3]){
+            if(top-bottom>2.2&&track.clearOfOtherRoad(x,z,1.5,(bottom+top)/2-track.pose(x).y)){
+              blocks.push([x,(top+bottom)/2,z,1.6,top-bottom,1.2,0x64505a]);
+            }
+          }
+        }
+      }
       for(let x=start+1;x<stop;x+=3.5){
         block(x,-0.04,-6.8,0.14,1.36,0.16,0x392f32);
         block(x+1.7,0.35,-6.8,3.45,0.15,0.15,0xe9cf9d);
@@ -324,17 +422,6 @@ export class View {
         for(let layer=0;layer<4;layer++){
           block(x+rng()*4,high*layer*0.25-1.0,-27-rng()*5,10+rng()*10-layer,high*0.53,10-layer*0.7,palette.far);
           if(track.course.theme===1||track.course.theme===4) block(x+1,layer*1.13-0.3,-15-layer*1.5,9+rng()*3-layer,1.24,3.3,palette.rock);
-        }
-        if(track.course.theme===0 && (x<10 || Math.floor(x/28)%3!==0)){
-          for(let row=0;row<4;row++){
-            block(x,row*0.65-0.28,-11-row*0.85,8.9,0.63+row*0.31,0.95, row%2?0x96665a:0xb5846d);
-            for(let j=0;j<10;j++){
-              if(rng()<0.27) continue;
-              const shirt=[0xf2c15f,0xbc5950,0x427b83,0xebd9b9,0x3c4b59][Math.floor(rng()*5)];
-              block(x-4+j*0.87,row*0.8+0.07,-11-row*0.85,0.39,0.48,0.42,shirt);
-              block(x-4+j*0.87,row*0.8+0.39,-11-row*0.85,0.24,0.25,0.24,rng()>0.45?0xcf9571:0x845948);
-            }
-          }
         }
         if(track.course.theme===3){
           block(x,1.8,-14,7.7,5.3,4.7,0x762938);
@@ -369,18 +456,29 @@ export class View {
           for(let j=0;j<4;j++)block(x,1.65+j*0.56,z,3.2-j*0.62,0.59,2.95-j*0.5, j%2?0x566e58:0x63806b);
         }
       }
-      batch(this.world,blocks);
+      batch(this.world,blocks,track);
     }
     meshMaterial.dispose();
-    this.banner(11,0,'VOXEL BIKES',palette.trim);
-    for(const [index,x] of track.markers.entries())this.banner(x,0,index+1===track.laps?'FINISH':'LAP 2',palette.trim);
-    for(let x=66;x<track.end;x+=95) this.sign(x,x%2?'MX / 04':'DIRT CLUB',palette.trim);
+    if(loop)this.banner(0,0,'START / FINISH',palette.trim);
+    else{
+      this.banner(11,0,'VOXEL BIKES',palette.trim);
+      for(const [index,x] of track.markers.entries())this.banner(x,0,index+1===track.laps?'FINISH':'LAP 2',palette.trim);
+    }
+    for(let x=66;x<limit-20;x+=95){
+      if(track.clearOfOtherRoad(x,-7.1,2.15,0.92))this.sign(x,x%2?'MX / 04':'DIRT CLUB',palette.trim);
+    }
+    const crowdSpacing=track.course.theme===0?24:44;
+    for(let x=6;x<limit-9;x+=crowdSpacing){
+      if(!track.clearOfOtherRoad(x,-11.4,5.5,1.4))continue;
+      const crowd=new RaceCrowd(x,track,rng);
+      this.crowds.push(crowd);this.world.add(crowd.group);
+    }
     const cloudBlocks:Block[]=[];
-    for(let x=-50;x<track.end+80;x+=33) {
+    for(let x=loop?0:-50;x<(loop?track.lapLength:track.end+80);x+=33) {
       const y=10+rng()*8, z=-39-rng()*21;
       for(let i=0;i<6;i++)cloudBlocks.push([x+i*2.3,y+rng()*1.6,z+rng()*4,3+rng()*5,0.65+rng()*1.05,3+rng()*5,track.course.theme===2?0x8398aa:0xe4d9c6]);
     }
-    batch(this.world,cloudBlocks);
+    batch(this.world,cloudBlocks,track);
   }
   private label(text:string,accent:number) {
     const canvas=document.createElement('canvas');canvas.width=512;canvas.height=96;
@@ -391,31 +489,36 @@ export class View {
     const texture=new T.CanvasTexture(canvas);texture.colorSpace=T.SRGBColorSpace;
     return new T.MeshBasicMaterial({map:texture,side:T.DoubleSide});
   }
+  private place(object:T.Object3D,x:number,y:number,z:number){
+    const p=this.track.pose(x,z);
+    object.position.set(p.x,y+p.y,p.z);
+    object.rotation.y-=Math.atan2(p.fz,p.fx);
+  }
   private banner(x:number,y:number,text:string,accent:number) {
     const blocks:Block[]=[];
     for(let j=0;j<8;j++)blocks.push([x,y+0.32+j*0.64,-5.4,0.39,0.64,0.42,j%2?0xb42334:accent]);
     blocks.push([x,y+5.06,-0.2,0.33,0.38,10.4,0xb42334]);
-    batch(this.world,blocks);
+    batch(this.world,blocks.map(([s,py,z,w,h,d,c])=>[s,py+this.track.pose(s).y,z,w,h,d,c]),this.track);
     const label=new T.Mesh(new T.PlaneGeometry(8.5,1.6),this.label(text,accent));
     label.material.side=T.FrontSide;
-    label.rotation.y=-Math.PI/2;label.position.set(x-0.22,y+5.55,0);
+    label.rotation.y=-Math.PI/2;this.place(label,x-0.22,y+5.55,0);
     const reverse=new T.Mesh(label.geometry.clone(),label.material.clone());
-    reverse.rotation.y=Math.PI/2;reverse.position.set(x+0.22,y+5.55,0);
+    reverse.rotation.y=Math.PI/2;this.place(reverse,x+0.22,y+5.55,0);
     // A second board faces the side-on race camera.
     const side=new T.Mesh(new T.PlaneGeometry(4.8,0.9),label.material.clone());
-    side.position.set(x,y+5.55,-4.35);
+    this.place(side,x,y+5.55,-4.35);
     this.world.add(label,reverse,side);
     if(text!=='VOXEL BIKES'){
       const line:Block[]=[];
-      for(let i=0;i<16;i++)for(let j=0;j<2;j++)line.push([x+j*0.34,0.018,-4.5+i*0.6,0.34,0.038,0.60,(i+j)%2?0x303235:0xf3e1be]);
-      batch(this.world,line);
+      for(let i=0;i<16;i++)for(let j=0;j<2;j++)line.push([x+j*0.34,this.track.height(x+j*0.34,-4.5+i*0.6)+0.028,-4.5+i*0.6,0.34,0.038,0.60,(i+j)%2?0x303235:0xf3e1be]);
+      batch(this.world,line,this.track);
     }
   }
   private sign(x:number,text:string,accent:number){
     const label=new T.Mesh(new T.PlaneGeometry(4.3,0.8),this.label(text,accent));
-    label.position.set(x,0.92,-7.1);this.world.add(label);
+    this.place(label,x,0.92,-7.1);this.world.add(label);
   }
-  frame(dt:number,race:Race|undefined) {
+  frame(dt:number,race:Race|undefined,alpha:number) {
     const canvas=this.renderer.domElement;
     const w=canvas.clientWidth,h=canvas.clientHeight;
     if(!w||!h)return;
@@ -427,7 +530,11 @@ export class View {
     }
     if(!race){this.title.frame(this.renderer,dt,this.camera.aspect,!this.reduceMotion);return;}
     this.elapsed+=dt;
-    const bikes:Bike[]=[race.rider,...race.rivals];
+    const bikes:Bike[]=[race.rider,...race.rivals].map((b,i)=>{
+      const prev=race.previous[i];
+      return {...b,x:blend(prev.x,b.x,alpha),y:blend(prev.y,b.y,alpha),z:blend(prev.z,b.z,alpha),
+        pitch:blend(prev.pitch,b.pitch,alpha),lean:blend(prev.lean,b.lean,alpha),spin:blend(prev.spin,b.spin,alpha)};
+    });
     const r=bikes[0];
     const n=bikes.length;
     while(this.riders.length<n) this.riders.push(makeRider(this.scene,[0xd32a3c,0x56bcb6,0xffc35d,0x8c91e8][this.riders.length]));
@@ -448,8 +555,10 @@ export class View {
       view.shadow.visible=!!bike&&i<n;
       if(!bike)return;
       const ground=this.track.height(bike.x,bike.z);
-      view.root.position.set(bike.x,bike.y,bike.z);
-      view.body.rotation.set(bike.lean,0,bike.pitch);
+      const pose=this.track.pose(bike.x,bike.z), yaw=-Math.atan2(pose.fz,pose.fx);
+      view.root.position.set(pose.x,bike.y,pose.z);
+      view.root.rotation.y=yaw;
+      view.body.rotation.set(bike.lean-(bike.air?0:Math.atan(this.track.bank(pose.curvature))),0,bike.pitch);
       view.person.position.set(0,-bike.impact*0.13,0);
       view.person.rotation.set(0,0,-bike.impact*0.17-bike.wheelie*0.14+
         Math.sin(this.elapsed*18)*Math.min(0.025,bike.speed/900));
@@ -478,7 +587,8 @@ export class View {
       }
       view.fork.scale.y=0.14-bike.impact*0.026;
       view.wheels.forEach(w=>{w.rotation.z=bike.spin;w.position.y=-0.18+bike.impact*0.08;});
-      view.shadow.position.set(bike.x,ground+0.029,bike.z);
+      view.shadow.position.set(pose.x,ground+0.040,pose.z);
+      view.shadow.rotation.set(-Math.atan(this.track.bank(pose.curvature)),yaw,this.track.slope(bike.x,bike.z),'YXZ');
       (view.shadow.material as T.MeshBasicMaterial).opacity=clamp(0.26-(bike.y-ground-0.72)*0.054,0.06,0.28);
     });
     if(race&&race.time>0&&!race.done&&this.elapsed-this.lastDust>0.034){
@@ -495,25 +605,39 @@ export class View {
     this.dust.count=this.particles.length;
     const obj=new T.Object3D(),color=new T.Color();
     this.particles.forEach((p,i)=>{
-      p.life-=dt;p.y+=dt*0.58;p.x-=dt*1.5;obj.position.set(p.x,p.y,p.z);
+      p.life-=dt;p.y+=dt*0.58;p.x-=dt*1.5;
+      const pose=this.track.pose(p.x,p.z);
+      obj.position.set(pose.x,p.y,pose.z);
       obj.scale.setScalar(p.size*clamp(p.life*4,0.1,1));obj.rotation.y=i*0.9;obj.updateMatrix();
       this.dust.setMatrixAt(i,obj.matrix);this.dust.setColorAt(i,color.setHex(p.color));
     });
     this.dust.instanceMatrix.needsUpdate=true;
     if(this.dust.instanceColor)this.dust.instanceColor.needsUpdate=true;
+    const crowdEvent=race.crowd;
+    const newEvent=!!crowdEvent&&crowdEvent.serial!==this.crowdSerial;
+    if(crowdEvent&&newEvent)this.crowdSerial=crowdEvent.serial;
+    for(const crowd of this.crowds){
+      if(newEvent){
+        const distance=Math.abs(this.track.delta(crowd.distance,crowdEvent.x));
+        if(distance<58)crowd.react(crowdEvent.kind,1-distance/78);
+      }
+      const distance=Math.abs(this.track.delta(crowd.distance,r.x));
+      crowd.update(this.elapsed,dt,this.reduceMotion?0:clamp(1-distance/19,0,1),distance<105||newEvent);
+    }
     const aspect=this.camera.aspect, portrait=aspect<1;
     const lead=r.crashKind===CrashKind.Back?3.8:5.0;
-    this.targetX=blend(this.targetX,r.x+lead,1-Math.exp(-dt*11));
     const ground=this.track.height(r.x,r.z), nearEdge=this.track.height(r.x-2,4.7);
-    this.targetY=blend(this.targetY,Math.max(ground,nearEdge*0.79)+Math.max(0,r.y-ground-0.72)*0.38,1-Math.exp(-dt*8));
-    this.targetZ=blend(this.targetZ,r.z,1-Math.exp(-dt*6));
+    const lift=Math.max(ground,nearEdge*0.79+ground*0.21)+Math.max(0,r.y-ground-0.72)*0.38;
+    this.targetX=blend(this.targetX,r.x+lead,this.cameraReady?1-Math.exp(-dt*11):1);
+    this.targetY=blend(this.targetY,lift,this.cameraReady?1-Math.exp(-dt*8):1);
+    this.targetZ=blend(this.targetZ,r.z,this.cameraReady?1-Math.exp(-dt*6):1);
     const x=this.targetX,y=this.targetY,z=this.targetZ;
     const sideDepth=Math.max(14.9,23/aspect);
     const wideDepth=Math.max(21,30/aspect);
     let fov=portrait?44:33;
     switch(this.cameraIndex){
       case 1:
-        this.desiredPosition.set(x-7.8,y+10.2,z+wideDepth);
+        this.desiredPosition.set(x-7.8,y+11.0,z+wideDepth);
         this.desiredFocus.set(x+2.1,y+0.7,z-1.4);fov=38;
         break;
       case 2:
@@ -528,7 +652,15 @@ export class View {
         this.desiredPosition.set(x-7.2,y+1.88,z+sideDepth);
         this.desiredFocus.set(x+0.25,y+2.12,z-0.4);
     }
-    const cameraBlend=this.cameraReady&&!this.reduceMotion?1-Math.exp(-dt*14):1;
+    if(this.track.circuit){
+      const anchor=this.track.pose(r.x);
+      const offset=this.desiredPosition.x-r.x, lateral=this.desiredPosition.z;
+      this.desiredPosition.x=anchor.x+anchor.fx*offset-anchor.fz*lateral;
+      this.desiredPosition.z=anchor.z+anchor.fz*offset+anchor.fx*lateral;
+      const ahead=this.track.pose(this.desiredFocus.x,this.desiredFocus.z);
+      this.desiredFocus.x=ahead.x;this.desiredFocus.z=ahead.z;
+    }
+    const cameraBlend=this.cameraReady&&!this.reduceMotion?1-Math.exp(-dt*12):1;
     this.camera.position.lerp(this.desiredPosition,cameraBlend);
     this.focus.lerp(this.desiredFocus,cameraBlend);
     this.camera.fov=blend(this.camera.fov,fov,cameraBlend);
