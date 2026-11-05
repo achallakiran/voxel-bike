@@ -337,7 +337,10 @@ function endRace(finished:Race){
   const fastest=Math.min(...finished.splits);
   el('lapResults').replaceChildren(...finished.splits.map((lap,i)=>{
     const row=document.createElement('li');
-    row.textContent='Lap '+(i+1)+' · '+clock(lap)+(lap===fastest?'  ★':'');
+    const label=document.createElement('span'), time=document.createElement('time');
+    label.textContent='Lap '+(i+1)+(lap===fastest?' ★':'');
+    time.textContent=clock(lap);
+    row.append(label,time);
     return row;
   }));
   showPodium(podium);
@@ -486,6 +489,10 @@ button('cameraButton',nextCamera);
 button('pauseButton',()=>show('pause'));
 button('resume',()=>{sound.unlock();show('race');});
 button('restart',()=>start(course));button('retry',()=>start(course));
+button('nextTrack',()=>{
+  const next=(COURSES.findIndex(c=>c.id===course.id)+1)%COURSES.length;
+  start(COURSES[next]);
+});
 button('pauseExit',home);button('resultExit',home);button('rotateExit',home);
 button('reload',()=>location.reload());
 const soundToggle=el<HTMLInputElement>('sound'), qualityToggle=el<HTMLInputElement>('quality');
@@ -498,7 +505,7 @@ function setCamera(index:number){
   el('touchHelp').textContent=(forwardView()
     ? 'Move left or right to change lanes. Pull down to lift the nose or push up to lower it.'
     : 'Move up or down to change lanes. Pull left to lift the nose or push right to lower it.')
-    +' The gauge is throttle, the disc is brake, and the bolt is turbo.';
+    +' The gauge is throttle and the bolt is turbo. Release both to coast.';
   el('laneKeys').textContent=forwardView()?'← / →':'↑ / ↓';
   el('pitchKeys').textContent=forwardView()?'↓ / ↑':'← / →';
   if(view)view.cameraIndex=cameraIndex;

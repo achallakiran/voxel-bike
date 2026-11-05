@@ -21,10 +21,9 @@
   </section>
   <section id="home" class="screen home" hidden>
     <div class="title-plate">
-      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 07</div>
-      <h1>VOXEL<span>BIKES</span></h1>
+      <div class="eyebrow"><span class="check"></span> REDLINE SERIES</div>
+      <h1>VOXEL <span>BIKES</span></h1>
     </div>
-    <div class="race-number" aria-hidden="true">07</div>
     <nav class="pit-board" aria-label="Main menu">
       <button data-mode="trial" class="pit-button"><span>01</span> Time Trial</button>
       <button data-mode="rival" class="pit-button"><span>02</span> Rival Race</button>
@@ -76,7 +75,6 @@
       </div>
       <div class="pedals">
         <button class="gas" data-action="gas" aria-label="Throttle"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 22a11 11 0 1 1 20 0M16 17l6-7M8 17h2m12 0h2M16 8v2"/><circle cx="16" cy="17" r="2"/></svg></button>
-        <button class="brake" data-action="brake" aria-label="Brake"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="7"/><path d="M7 6a13 13 0 0 0 0 20M25 6a13 13 0 0 1 0 20M16 13v6"/></svg></button>
         <button class="turbo" data-action="turbo" aria-label="Turbo"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M17 3 7 18h8l-1 11 11-16h-9z"/></svg></button>
       </div>
     </div>
@@ -88,10 +86,22 @@
     </div>
   </section>
   <section id="results" class="screen overlay" hidden>
-    <div class="panel compact">
-      <div class="eyebrow" id="resultCourse"></div><h2 id="resultTitle">Finish</h2>
-      <div id="resultTime" class="result-time"></div><div id="resultDetail" class="result-detail"></div><div id="podium" class="podium" aria-label="Race podium" hidden></div><ol id="lapResults" class="lap-results" aria-label="Lap times, star marks fastest"></ol>
-      <div class="stack"><button id="retry" class="solid">Race again ↗</button><button id="resultExit" class="text-button">← Main menu</button></div>
+    <div class="panel results-panel">
+      <div class="results-overview">
+        <div>
+          <div class="eyebrow" id="resultCourse"></div>
+          <h2 id="resultTitle">Finish</h2>
+          <div id="resultTime" class="result-time"></div>
+          <div id="resultDetail" class="result-detail"></div>
+        </div>
+        <div id="podium" class="podium" aria-label="Race podium" hidden></div>
+      </div>
+      <ol id="lapResults" class="lap-results" aria-label="Lap times, star marks fastest"></ol>
+      <div class="result-actions">
+        <button id="nextTrack" class="solid">Next Track →</button>
+        <button id="retry" class="outline">Race Again</button>
+        <button id="resultExit" class="outline">Main Menu</button>
+      </div>
     </div>
   </section>
   <section id="rotate" class="screen overlay" hidden><div class="panel compact rotate-panel"><span class="phone" aria-hidden="true"></span><h2>Rotate to ride</h2><p>Turn your device to landscape.</p><button id="rotateExit" class="text-button">← Exit race</button></div></section>
