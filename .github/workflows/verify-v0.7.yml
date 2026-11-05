@@ -1,14 +1,18 @@
 name: Validate Voxel Bikes v0.7
 on:
-  push:
-    branches: [voxel-bikes-v0.7]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
 permissions:
-  contents: write
+  contents: read
 jobs:
   check:
+    if: github.head_ref == 'voxel-bikes-v0.7'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -48,6 +52,19 @@ jobs:
           assert.equal(rival.elapsed,time);
           assert.equal(rival.finishOrder[0].index,0);
           assert(rival.crowd.some(e=>e.kind==='finish'));
+          const landing=new Race(track,'trial',undefined);
+          landing.time=4;landing.rider.x=12;
+          landing.rider.y=track.height(12,landing.rider.z)+0.733;
+          landing.rider.pitch=track.slope(12,landing.rider.z);
+          landing.rider.speed=12;landing.rider.air=true;landing.rider.vy=-5;
+          for(let i=0;i<6&&landing.rider.air;i++)landing.step(DT);
+          assert(landing.crowd.some(e=>e.kind==='landing'));
+          const crash=new Race(track,'trial',undefined);
+          crash.time=1;crash.rider.x=4;crash.rider.speed=16;
+          crash.inputs.gas=true;crash.inputs.pitch=1;
+          for(let i=0;i<120&&!crash.rider.crash;i++)crash.step(DT);
+          assert(crash.rider.crash>0);
+          assert(crash.crowd.some(e=>e.kind==='gasp'));
           EOF
       - name: Browser smoke test
         run: |
@@ -73,14 +90,24 @@ jobs:
           await page.keyboard.up('KeyZ');
           assert.match(await page.locator('#cameraButton').getAttribute('aria-label'),/Broadcast/);
           assert.deepEqual(errors,[]);
+          await page.close();
+          const trial=await browser.newPage({viewport:{width:900,height:500},offline:true,reducedMotion:'reduce'});
+          trial.on('pageerror',e=>errors.push(e.message));
+          await trial.addInitScript(()=>{
+            const raf=requestAnimationFrame.bind(window);
+            let last=-1, time=performance.now();
+            window.requestAnimationFrame=fn=>raf(t=>{if(t!==last){last=t;time+=119;}fn(time);});
+          });
+          await trial.goto('file://'+process.cwd()+'/dist/Voxel-Bikes-Offline.html');
+          await trial.locator('#studioContinue').click();
+          await trial.getByRole('button',{name:/Time Trial/}).click();
+          await trial.getByRole('button',{name:/Clay Circuit/}).click();
+          await trial.keyboard.down('KeyZ');
+          await trial.locator('#podium').waitFor({state:'visible',timeout:150000});
+          await trial.keyboard.up('KeyZ');
+          assert.equal(await trial.locator('.podium-step.current b').textContent(),'This run');
+          assert.equal(await trial.locator('#lapResults li').count(),3);
+          assert.equal(await trial.locator('.podium-step b').count(),1);
+          assert.deepEqual(errors,[]);
           await browser.close();
           EOF
-      - name: Save verified builds to staging branch
-        run: |
-          cp dist/index.html index.html
-          cp dist/Voxel-Bikes-Offline.html Voxel-Bikes-Offline.html
-          git config user.name github-actions
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add index.html Voxel-Bikes-Offline.html
-          git diff --cached --quiet || git commit -m "Build verified v0.7 offline and hosted HTML"
-          git push origin HEAD:voxel-bikes-v0.7
