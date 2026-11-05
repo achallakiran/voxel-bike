@@ -65,7 +65,6 @@ body{background:#3b2428}
 .route-preview circle{fill:#ff6978;stroke:#fff4e6;stroke-width:0.7}
 
 .pedals{align-items:flex-end}
-.pedals .turbo{width:clamp(38px,12vh,52px);height:clamp(38px,12vh,52px)}
 .lap-setting{display:flex;align-items:center;gap:9px;margin:0 0 9px;color:var(--cream);font:700 13px ui-monospace,monospace;text-transform:uppercase}
 .lap-setting select{padding:3px 12px;background:#572b32;color:var(--cream);border:1px solid var(--line);border-radius:3px}
 .lap-results{display:grid;grid-template-columns:repeat(2,1fr);gap:4px 12px;list-style:none;padding:0;margin:0 0 13px;color:var(--muted);font:700 12px ui-monospace,monospace}

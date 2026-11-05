@@ -20,31 +20,45 @@ function studioAudio(){
     if(!Audio)return;
     const context=new Audio();
     if(context.state==='suspended')void context.resume().catch(()=>{});
-    const noise=context.createBuffer(1,Math.ceil(context.sampleRate*0.16),context.sampleRate);
+    const noise=context.createBuffer(1,Math.ceil(context.sampleRate*1.25),context.sampleRate);
     const data=noise.getChannelData(0);
     for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;
+    function envelope(at:number,attack:number,duration:number,peak:number){
+      const gain=context.createGain();
+      gain.gain.setValueAtTime(0.001,at);
+      gain.gain.exponentialRampToValueAtTime(peak,at+attack);
+      gain.gain.exponentialRampToValueAtTime(0.001,at+duration);
+      gain.connect(context.destination);
+      return gain;
+    }
+    function burst(at:number,duration:number,from:number,to:number,peak:number,attack=0.006){
+      const source=context.createBufferSource(), filter=context.createBiquadFilter();
+      source.buffer=noise;
+      filter.type='bandpass';filter.Q.value=0.85;
+      filter.frequency.setValueAtTime(from,at);
+      filter.frequency.exponentialRampToValueAtTime(to,at+duration);
+      source.connect(filter).connect(envelope(at,attack,duration,peak));
+      source.start(at,0,duration);
+    }
+    function sweep(at:number,duration:number,from:number,to:number,peak:number,type:OscillatorType){
+      const oscillator=context.createOscillator();
+      oscillator.type=type;
+      oscillator.frequency.setValueAtTime(from,at);
+      oscillator.frequency.exponentialRampToValueAtTime(to,at+duration);
+      oscillator.connect(envelope(at,0.018,duration,peak));
+      oscillator.start(at);oscillator.stop(at+duration);
+    }
     return {
-      zap(power:number){
+      zap(power:number,thunder:boolean){
         if(context.state!=='running')return;
         const now=context.currentTime;
-        const spark=context.createBufferSource(), filter=context.createBiquadFilter(), crack=context.createGain();
-        spark.buffer=noise;
-        filter.type='bandpass';filter.Q.value=1.3;
-        filter.frequency.setValueAtTime(3400,now);
-        filter.frequency.exponentialRampToValueAtTime(1250,now+0.13);
-        crack.gain.setValueAtTime(0.001,now);
-        crack.gain.exponentialRampToValueAtTime(0.34*power,now+0.009);
-        crack.gain.exponentialRampToValueAtTime(0.001,now+0.15);
-        spark.connect(filter).connect(crack).connect(context.destination);
-        spark.start(now);
-        const buzz=context.createOscillator(), envelope=context.createGain();
-        buzz.type='sawtooth';buzz.frequency.setValueAtTime(160,now);
-        buzz.frequency.exponentialRampToValueAtTime(72,now+0.16);
-        envelope.gain.setValueAtTime(0.001,now);
-        envelope.gain.exponentialRampToValueAtTime(0.065*power,now+0.015);
-        envelope.gain.exponentialRampToValueAtTime(0.001,now+0.18);
-        buzz.connect(envelope).connect(context.destination);
-        buzz.start(now);buzz.stop(now+0.19);
+        for(let i=0;i<3;i++)burst(now+i*0.034,0.055,4100-i*470,1520,0.22*power);
+        sweep(now,0.17,160,72,0.045*power,'sawtooth');
+        if(thunder){
+          burst(now,0.12,4100,1750,0.30);
+          burst(now+0.045,0.96,780,100,0.46,0.06);
+          sweep(now+0.025,0.77,105,32,0.23,'sine');
+        }
       },
       close(){void context.close().catch(()=>{});}
     };
@@ -74,7 +88,7 @@ export async function playStudioLogo(host:HTMLElement,onComplete:()=>void,soundE
   host.append(display);
   const duration=reduced||!context?1.8:3.6;
   const arcs:Arc[]=[];
-  let age=0,previous=performance.now(),nextArc=0,nextZap=0.08;
+  let age=0,previous=performance.now(),nextArc=0,nextZap=0.08,closingThunder=false;
   function frame(now:number){
     const dt=Math.min(0.05,Math.max(0,(now-previous)/1000));
     previous=now;
@@ -83,9 +97,10 @@ export async function playStudioLogo(host:HTMLElement,onComplete:()=>void,soundE
     if(age>=duration){display.remove();sound?.close();onComplete();return;}
     if(age>=nextZap){
       const surge=age<0.8||age>duration-0.65;
-      sound?.zap(surge?1:0.46);
+      sound?.zap(surge?1:0.46,nextZap===0.08);
       nextZap=age+(reduced?duration:surge?0.28:0.70);
     }
+    if(!closingThunder&&age>=2.52){closingThunder=true;sound?.zap(0.9,true);}
     if(display===canvas&&context){
       const w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(2,window.devicePixelRatio||1);
       if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){
