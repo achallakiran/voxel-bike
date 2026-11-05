@@ -1,0 +1,27 @@
+{
+  "name": "game",
+  "version": "0.1.0",
+  "description": "Offline-ready voxel motocross racing",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/achallakiran/voxel-bike.git"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/achallakiran/voxel-bike/issues"
+  },
+  "homepage": "https://github.com/achallakiran/voxel-bike#readme",
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}

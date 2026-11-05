@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#162229">
+<meta name="description" content="Voxel Bikes is an offline-ready arcade motocross racer with time trials, rival races, and a track builder.">
+<title>Voxel Bikes · Dirt Circuit</title>
+<style>/* STYLE */</style>
+</head>
+<body>
+<canvas id="world" aria-label="Voxel Bikes 3D motocross track"></canvas>
+<div id="vignette"></div>
+<main id="ui">
+  <section id="home" class="screen home">
+    <div class="menu-content">
+      <div class="eyebrow"><span class="check"></span> DIRT CIRCUIT <span class="slash">/</span> VOL. 01</div>
+      <h1><span>VOXEL</span><span>BIKES<span class="dot">.</span></span></h1>
+      <div class="menu-actions">
+        <button data-mode="trial" class="menu-button primary"><span class="num">01</span> Time Trial <span class="chev">↗</span></button>
+        <button data-mode="rival" class="menu-button"><span class="num">02</span> Rival Race <span class="chev">↗</span></button>
+        <button id="builderButton" class="menu-button"><span class="num">03</span> Track Builder <span class="chev">↗</span></button>
+      </div>
+      <div class="small-actions"><button id="settingsButton" class="text-button">Settings</button><button id="offline" class="text-button">Offline HTML ↓</button></div>
+    </div>
+    <div class="scene-mark"><span class="check"></span><span>01<br><b>CLAY CIRCUIT</b></span></div>
+  </section>
+
+  <section id="select" class="screen overlay" hidden>
+    <div class="panel select-panel">
+      <div class="eyebrow">Dirt Circuit / Course Select</div><h2 id="modeTitle">Time Trial</h2>
+      <div id="courses" class="cards"></div>
+      <button class="text-button" data-home>← Main menu</button>
+    </div>
+  </section>
+
+  <section id="settings" class="screen overlay" hidden>
+    <div class="panel compact">
+      <div class="eyebrow">Pit Lane</div><h2>Settings</h2>
+      <label class="setting">Engine &amp; race audio <input type="checkbox" id="sound" checked></label>
+      <label class="setting">High-resolution rendering <input type="checkbox" id="quality" checked></label>
+      <dl class="keylist"><div><dt>Lane</dt><dd>↑ / ↓</dd></div><div><dt>Pitch</dt><dd>← / →</dd></div><div><dt>Throttle</dt><dd>Z</dd></div><div><dt>Turbo</dt><dd>X</dd></div><div><dt>Pause</dt><dd>Esc</dd></div></dl>
+      <button class="text-button" data-home>← Main menu</button>
+    </div>
+  </section>
+
+  <section id="builder" class="screen overlay" hidden>
+    <div class="panel builder-panel">
+      <div class="eyebrow">Workshop / Course Editor</div><h2>Track Builder</h2>
+      <div class="builder-options">
+        <input id="trackName" maxlength="36" aria-label="Track name" value="My Track">
+        <select id="theme" aria-label="Track setting"><option value="0">Clay arena</option><option value="1">Quarry</option><option value="2">Mud fair</option></select>
+      </div>
+      <div id="palette" class="palette" aria-label="Track pieces"></div>
+      <div id="layout" class="layout" aria-label="Track layout"></div>
+      <div class="editor-tools">
+        <span id="layoutInfo"></span>
+        <button id="earlier" class="text-button" aria-label="Move piece earlier">← Move</button>
+        <button id="later" class="text-button" aria-label="Move piece later">Move →</button>
+        <button id="remove" class="text-button">Remove</button>
+      </div>
+      <div class="builder-footer">
+        <button id="testTrack" class="solid">Test ride ↗</button><button id="export" class="text-button">Export</button><button id="import" class="text-button">Import</button>
+        <button class="text-button" data-home>← Menu</button>
+      </div>
+      <div id="builderStatus" role="status"></div><input id="fileInput" type="file" accept=".json,application/json" hidden>
+    </div>
+  </section>
+
+  <section id="race" class="screen" hidden>
+    <div class="hud">
+      <div class="hud-chip"><small id="timeLabel">TIME</small><strong id="time">00:00.00</strong></div>
+      <div class="hud-middle"><div class="course-label" id="courseLabel"></div><div class="course-progress" role="progressbar" aria-label="Course progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div></div>
+      <div class="hud-right">
+        <div class="hud-chip heat-chip"><small>ENGINE HEAT</small><div class="heat" role="meter" aria-label="Engine heat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="heat"></i></div></div>
+        <button id="pauseButton" class="square" aria-label="Pause">Ⅱ</button>
+      </div>
+    </div>
+    <div id="countdown" class="countdown"></div><div id="feedback" class="feedback" hidden></div>
+    <div class="touch">
+      <div class="dpad">
+        <button class="up" data-action="up" aria-label="Lane up">▲</button>
+        <button class="down" data-action="down" aria-label="Lane down">▼</button>
+        <button class="left" data-action="back" aria-label="Nose up">◀</button>
+        <button class="right" data-action="forward" aria-label="Nose down">▶</button>
+      </div>
+      <div class="pedals">
+        <button class="gas" data-action="gas" aria-label="Throttle"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 22a11 11 0 1 1 20 0M16 17l6-7M8 17h2m12 0h2M16 8v2"/><circle cx="16" cy="17" r="2"/></svg></button>
+        <button class="turbo" data-action="turbo" aria-label="Turbo"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M17 3 7 18h8l-1 11 11-16h-9z"/></svg></button>
+      </div>
+    </div>
+  </section>
+  <section id="pause" class="screen overlay" hidden>
+    <div class="panel compact">
+      <div class="eyebrow">Pit Stop</div><h2>Paused</h2>
+      <div class="stack"><button id="resume" class="solid">Resume</button><button id="restart" class="outline">Restart race</button><button id="pauseExit" class="text-button">← Main menu</button></div>
+    </div>
+  </section>
+  <section id="results" class="screen overlay" hidden>
+    <div class="panel compact">
+      <div class="eyebrow" id="resultCourse"></div><h2 id="resultTitle">Finish</h2>
+      <div id="resultTime" class="result-time"></div><div id="resultDetail" class="result-detail"></div>
+      <div class="stack"><button id="retry" class="solid">Race again ↗</button><button id="resultExit" class="text-button">← Main menu</button></div>
+    </div>
+  </section>
+  <section id="rotate" class="screen overlay" hidden><div class="panel compact rotate-panel"><span class="phone" aria-hidden="true"></span><h2>Rotate to ride</h2><button id="rotateExit" class="text-button">← Exit race</button></div></section>
+  <section id="error" class="screen overlay" hidden><div class="panel compact"><h2>3D could not start</h2><p id="errorMessage">This game requires WebGL 2. Enable browser graphics acceleration and reopen the game.</p><button id="reload" class="solid">Reload</button></div></section>
+</main>
+<script>/* BUNDLE */</script>
+</body>
+</html>

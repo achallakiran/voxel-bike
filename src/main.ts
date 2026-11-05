@@ -1,0 +1,362 @@
+import {COURSES, PIECES, DT, Track, Race, clamp, type Course, type Piece, type Mode, type RecordRun} from './race';
+import {View} from './view';
+
+const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
+type Screen = 'home'|'select'|'settings'|'builder'|'race'|'pause'|'results'|'rotate'|'error';
+type Action = 'up'|'down'|'back'|'forward'|'gas'|'turbo';
+const screens: Screen[]=['home','select','settings','builder','race','pause','results','rotate','error'];
+const keys: Record<string, Action> = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'back',ArrowRight:'forward',KeyZ:'gas',KeyX:'turbo'};
+const prefix='voxel-bikes:v1:';
+function load<T>(key:string, fallback:T):T {
+  try { return JSON.parse(localStorage.getItem(prefix+key) ?? 'null') ?? fallback; }
+  catch { return fallback; }
+}
+function save(key:string, value:unknown) {
+  try {localStorage.setItem(prefix+key,JSON.stringify(value)); return true;}
+  catch {return false;}
+}
+function clock(value:number) {
+  const hundredths=Math.floor(Math.max(0,value)*100+1e-7);
+  const digits=(n:number)=>String(n).padStart(2,'0');
+  return digits(Math.floor(hundredths/6000))+':'+digits(Math.floor(hundredths/100)%60)+'.'+digits(hundredths%100);
+}
+class Sound {
+  enabled=true;
+  private ctx?:AudioContext;
+  private gain?:GainNode;
+  private engine?:OscillatorNode;
+  private filter?:BiquadFilterNode;
+  unlock(){
+    if(!this.enabled)return;
+    try{
+      if(!this.ctx){
+        this.ctx=new AudioContext();
+        this.gain=this.ctx.createGain();this.gain.gain.value=0;
+        this.filter=this.ctx.createBiquadFilter();this.filter.type='lowpass';
+        this.engine=this.ctx.createOscillator();this.engine.type='sawtooth';
+        this.engine.connect(this.filter).connect(this.gain).connect(this.ctx.destination);this.engine.start();
+      }
+      if(this.ctx.state!=='running')void this.ctx.resume().catch(()=>{});
+    }catch{ /* Gameplay continues if audio is unavailable. */ }
+  }
+  update(race:Race|undefined){
+    if(!this.ctx||!this.engine||!this.gain||!this.filter)return;
+    const bike=race?.rider;
+    const running=this.enabled&&bike&&!race.done&&race.time>0;
+    const now=this.ctx.currentTime;
+    this.gain.gain.setTargetAtTime(running?(bike.crash?0.014:race.inputs.gas||race.inputs.turbo?0.055:0.026):0,now,0.05);
+    if(!running)return;
+    const rev=43+bike.speed*2.9+(bike.air?18:0)+(race.inputs.turbo&&!bike.hot?13:0);
+    this.engine.frequency.setTargetAtTime(bike.crash?38:rev,now,0.035);
+    this.filter.frequency.setTargetAtTime(bike.hot?180:220+bike.speed*17,now,0.07);
+  }
+  beep(frequency:number, duration=0.15){
+    if(!this.enabled||!this.ctx||this.ctx.state!=='running')return;
+    const o=this.ctx.createOscillator(),g=this.ctx.createGain(),now=this.ctx.currentTime;
+    o.type='triangle';o.frequency.value=frequency;g.gain.setValueAtTime(0.0001,now);
+    g.gain.exponentialRampToValueAtTime(0.16,now+0.014);
+    g.gain.exponentialRampToValueAtTime(0.0001,now+duration);
+    o.connect(g).connect(this.ctx.destination);o.start();o.stop(now+duration);
+  }
+}
+interface Draft {format:'voxel-bikes-track';version:1;name:string;theme:number;layout:Piece[]}
+const defaultDraft:Draft={format:'voxel-bikes-track',version:1,name:'My Track',theme:0,
+  layout:['tabletop','cool','rollers','mud','double','straight']};
+function validDraft(value:unknown):value is Draft {
+  if(!value||typeof value!=='object')return false;
+  const d=value as Draft;
+  return d.format==='voxel-bikes-track'&&d.version===1&&typeof d.name==='string'&&d.name.length<=36&&
+    Number.isInteger(d.theme)&&d.theme>=0&&d.theme<=2&&Array.isArray(d.layout)&&d.layout.length<=28&&
+    d.layout.every(p=>Object.hasOwn(PIECES,p));
+}
+let draft=load('draft',defaultDraft);
+if(!validDraft(draft))draft=defaultDraft;
+let selected=-1;
+let screen:Screen='home', mode:Mode='trial', race:Race|undefined;
+let course:Course=COURSES[0];
+let held=new Map<string,Action>();
+const tapButtons=Array.from(document.querySelectorAll<HTMLButtonElement>('[data-action]'));
+const coarse=matchMedia('(any-pointer: coarse)');
+const portrait=matchMedia('(orientation: portrait)');
+const sound=new Sound();
+const settings=load('settings',{sound:true,quality:true});
+const nameInput=el<HTMLInputElement>('trackName');
+const themeInput=el<HTMLSelectElement>('theme');
+const fileInput=el<HTMLInputElement>('fileInput');
+const runRecords=new Map<string,RecordRun>();
+let view:View|undefined;
+let countdown='', lastSignal='';
+function storedRun(id:string) {
+  if(runRecords.has(id))return runRecords.get(id);
+  const r=load<RecordRun|null>('best:'+id,null);
+  if(r&&Number.isFinite(r.time)&&r.time>0&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===6&&f.every(Number.isFinite))){
+    runRecords.set(id,r);return r;
+  }
+  return undefined;
+}
+function button(id:string, handler:()=>void) {el(id).addEventListener('click',handler);}
+function clearInput(){
+  held.clear();readInput();
+}
+function show(next:Screen){
+  screen=next;clearInput();
+  for(const name of screens)el(name).hidden=name!==next;
+  const current=el(next);
+  if(next!=='race')current.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus({preventScroll:true});
+  else if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
+  sound.update(next==='race'?race:undefined);
+}
+function home(){
+  race=undefined;
+  view?.reset(new Track(COURSES[0]));
+  show('home');
+}
+function choose(next:Mode){
+  mode=next;
+  el('modeTitle').textContent=mode==='trial'?'Time Trial':'Rival Race';
+  el('courses').replaceChildren(...COURSES.map((c,i)=>{
+    const b=document.createElement('button');b.className='course-card';
+    b.style.setProperty('--card',['#a57550','#776885','#487e82'][i]);
+    const best=mode==='trial'?storedRun(c.id):undefined;
+    b.innerHTML='<span class="card-index">0'+(i+1)+'</span><b>'+c.name+'</b><span>'+c.tagline+'</span>'+
+      (best?'<small>BEST '+clock(best.time)+'</small>':'');
+    b.addEventListener('click',()=>start(c));return b;
+  }));
+  show('select');
+}
+function start(c:Course){
+  if(!view)return;
+  course=c;
+  const track=new Track(course);
+  view.reset(track);
+  race=new Race(track,mode,mode==='trial'?storedRun(course.id):undefined);
+  sound.unlock();
+  el('courseLabel').textContent=course.name.toUpperCase();
+  el('pauseExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
+  el('resultExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
+  countdown='';lastSignal='';accumulator=0;
+  hud(race);
+  show('race');orientation();
+}
+function endRace(finished:Race){
+  el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':mode==='trial'?'Time Trial':'Test Ride');
+  el('resultTime').textContent=clock(finished.rider.finish);
+  let title='Run complete',detail='Course cleared';
+  if(mode==='rival'){
+    title=['1st place','2nd place','3rd place','4th place'][finished.position-1];
+    detail='Finished '+finished.position+' of '+(finished.rivals.length+1);
+  }
+  if(mode==='trial'){
+    const time=finished.rider.finish;
+    const best=storedRun(course.id);
+    const medal=time<=course.gold?'Gold':time<=course.gold*1.16?'Silver':time<=course.gold*1.36?'Bronze':'No';
+    title=medal==='No'?'Finish':medal+' medal';
+    if(!best||time<best.time){
+      const run={time,frames:finished.record};
+      runRecords.set(course.id,run);
+      const saved=save('best:'+course.id,run);
+      detail=saved?'New personal best · Ghost saved':'New personal best · Ghost available this session';
+    }else detail='Personal best '+clock(best.time)+' · +'+(time-best.time).toFixed(2)+' s';
+  }
+  el('resultTitle').textContent=title;
+  el('resultDetail').textContent=detail;
+  sound.beep(784,0.36);
+  show('results');
+}
+function setFill(id:string,percent:number){
+  const bar=el(id);bar.style.transform='scaleX('+percent/100+')';
+  bar.parentElement?.setAttribute('aria-valuenow',String(Math.round(percent)));
+}
+function hud(r:Race){
+  el('timeLabel').textContent=r.mode==='rival'?'P'+r.position+' / '+(r.rivals.length+1):'TIME';
+  el('time').textContent=clock(r.time);
+  setFill('progress',clamp((r.rider.x-5)/(r.track.end-5)*100,0,100));
+  setFill('heat',r.rider.heat);
+  el('heat').closest('.hud-chip')?.classList.toggle('hot',r.rider.hot);
+  const message=r.time<0?String(Math.ceil(-r.time)):r.time<0.65?'GO!':'';
+  if(message!==countdown){
+    countdown=message;
+    el('countdown').textContent=countdown;
+    if(countdown)sound.beep(countdown==='GO!'?760:410);
+  }
+  const cue=r.feedbackTime>0?r.feedback:null;
+  const feedback=el('feedback');
+  feedback.hidden=!cue||!!message;feedback.textContent=cue??'';
+  feedback.classList.toggle('danger',cue==='Overheated'||cue==='Wipeout'||cue==='Contact');
+  if(cue&&cue!==lastSignal){
+    if(cue==='Overheated'||cue==='Wipeout')sound.beep(130,0.28);
+    else if(cue==='Cooling')sound.beep(590);
+  }
+  lastSignal=cue??'';
+}
+function exitRace(){
+  if(mode==='test'){
+    race=undefined;showBuilder();
+  }else home();
+}
+function orientation(){
+  if(screen==='race'&&coarse.matches&&portrait.matches)show('rotate');
+  else if(screen==='rotate'&&(!coarse.matches||!portrait.matches))show('race');
+}
+portrait.addEventListener('change',orientation);coarse.addEventListener('change',orientation);
+function readInput(){
+  const active=new Set(held.values());
+  if(race){
+    race.inputs.gas=active.has('gas');race.inputs.turbo=active.has('turbo');
+    race.inputs.pitch=Number(active.has('back'))-Number(active.has('forward'));
+  }
+  for(const b of tapButtons)b.classList.toggle('active',active.has(b.dataset.action as Action));
+}
+function press(id:string,action:Action){
+  if(screen!=='race'||held.has(id))return;
+  sound.unlock();
+  held.set(id,action);
+  if(action==='up')race?.moveLane(-1);
+  if(action==='down')race?.moveLane(1);
+  readInput();
+}
+window.addEventListener('keydown',e=>{
+  if(e.code==='Escape'){
+    if(screen==='race')show('pause');
+    else if(screen==='pause'){show('race');orientation();}
+    else if(screen==='rotate')exitRace();
+    return;
+  }
+  const action=keys[e.code];
+  if(!action||screen!=='race')return;
+  e.preventDefault();
+  if(!e.repeat)press(e.code,action);
+});
+window.addEventListener('keyup',e=>{if(held.delete(e.code))readInput();});
+window.addEventListener('blur',()=>{if(screen==='race')show('pause');else clearInput();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&screen==='race')show('pause');});
+for(const b of tapButtons){
+  b.addEventListener('pointerdown',e=>{
+    e.preventDefault();
+    b.setPointerCapture(e.pointerId);
+    press('touch:'+e.pointerId,b.dataset.action as Action);
+  });
+  const release=(e:PointerEvent)=>{if(held.delete('touch:'+e.pointerId))readInput();};
+  b.addEventListener('pointerup',release);b.addEventListener('pointercancel',release);b.addEventListener('lostpointercapture',release);
+}
+function renderDraft(scroll=false){
+  const layout=el('layout');
+  layout.replaceChildren(...draft.layout.map((piece,i)=>{
+    const b=document.createElement('button');
+    b.textContent=(i+1)+' · '+PIECES[piece].icon+' '+PIECES[piece].name;
+    b.setAttribute('aria-pressed',String(i===selected));
+    b.addEventListener('click',()=>{selected=i;renderDraft();(layout.children[i] as HTMLButtonElement | undefined)?.focus({preventScroll:true});});
+    return b;
+  }));
+  if(scroll&&selected>=0)layout.children[selected]?.scrollIntoView({block:'nearest',inline:'nearest'});
+  el('layoutInfo').textContent=draft.layout.length+' / 28 pieces';
+  el<HTMLButtonElement>('earlier').disabled=selected<=0;
+  el<HTMLButtonElement>('later').disabled=selected<0||selected===draft.layout.length-1;
+  el<HTMLButtonElement>('remove').disabled=selected<0;
+  el<HTMLButtonElement>('testTrack').disabled=draft.layout.length===0;
+  for(const b of el('palette').querySelectorAll('button'))b.disabled=draft.layout.length>=28;
+}
+function commitDraft(message='',scroll=false){
+  const saved=save('draft',draft);
+  el('builderStatus').textContent=message||(!saved?'Draft available this session. Export to keep a copy.':'');
+  renderDraft(scroll);
+}
+function showBuilder(){
+  nameInput.value=draft.name;
+  themeInput.value=String(draft.theme);
+  renderDraft();show('builder');
+}
+for(const [piece,detail] of Object.entries(PIECES)){
+  const b=document.createElement('button');b.innerHTML='<span class="piece-icon">'+detail.icon+'</span>'+detail.name;
+  b.addEventListener('click',()=>{
+    if(draft.layout.length>=28)return;
+    selected=draft.layout.length;
+    draft={...draft,layout:[...draft.layout,piece as Piece]};commitDraft('',true);
+  });
+  el('palette').append(b);
+}
+nameInput.addEventListener('input',()=>{draft={...draft,name:nameInput.value};commitDraft();});
+themeInput.addEventListener('change',()=>{draft={...draft,theme:Number(themeInput.value)};commitDraft();});
+function movePiece(dir:number){
+  const dest=selected+dir;
+  if(selected<0||dest<0||dest>=draft.layout.length)return;
+  const layout=[...draft.layout];
+  [layout[selected],layout[dest]]=[layout[dest],layout[selected]];
+  draft={...draft,layout};selected=dest;commitDraft('',true);
+}
+button('earlier',()=>movePiece(-1));button('later',()=>movePiece(1));
+button('remove',()=>{
+  if(selected<0)return;
+  draft={...draft,layout:draft.layout.filter((_,i)=>i!==selected)};
+  selected=Math.min(selected,draft.layout.length-1);commitDraft();
+});
+button('testTrack',()=>{
+  if(!draft.layout.length)return;
+  mode='test';
+  start({id:'custom',name:draft.name.trim()||'My Track',theme:draft.theme,tagline:'',gold:0,layout:[...draft.layout]});
+});
+button('export',()=>{
+  const url=URL.createObjectURL(new Blob([JSON.stringify(draft,null,2)],{type:'application/json'}));
+  const a=document.createElement('a');
+  a.href=url;a.download=(draft.name.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'voxel-bikes-track')+'.json';
+  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+button('import',()=>fileInput.click());
+fileInput.addEventListener('change',async()=>{
+  const file=fileInput.files?.[0];fileInput.value='';
+  if(!file)return;
+  try{
+    if(file.size>64*1024)throw new Error('File too large');
+    const incoming:unknown=JSON.parse(await file.text());
+    if(!validDraft(incoming))throw new Error('Invalid course');
+    draft=incoming;selected=-1;showBuilder();commitDraft('Track imported.');
+  }catch{el('builderStatus').textContent='Could not import this Voxel Bikes track.';}
+});
+for(const b of document.querySelectorAll<HTMLButtonElement>('[data-mode]'))b.addEventListener('click',()=>choose(b.dataset.mode as Mode));
+for(const b of document.querySelectorAll<HTMLButtonElement>('[data-home]'))b.addEventListener('click',home);
+button('builderButton',showBuilder);
+button('settingsButton',()=>show('settings'));
+button('offline',()=>{
+  const a=document.createElement('a');a.href='./Voxel-Bikes-Offline.html';a.download='Voxel-Bikes-Offline.html';
+  document.body.append(a);a.click();a.remove();
+});
+if(location.protocol==='file:')el('offline').hidden=true;
+button('pauseButton',()=>show('pause'));
+button('resume',()=>{sound.unlock();show('race');orientation();});
+button('restart',()=>start(course));button('retry',()=>start(course));
+button('pauseExit',exitRace);button('resultExit',exitRace);button('rotateExit',exitRace);
+button('reload',()=>location.reload());
+const soundToggle=el<HTMLInputElement>('sound'), qualityToggle=el<HTMLInputElement>('quality');
+soundToggle.checked=settings.sound;qualityToggle.checked=settings.quality;sound.enabled=settings.sound;
+function syncSettings(){
+  sound.enabled=soundToggle.checked;
+  if(view)view.quality=qualityToggle.checked;
+  save('settings',{sound:sound.enabled,quality:qualityToggle.checked});
+}
+soundToggle.addEventListener('change',()=>{syncSettings();sound.unlock();});
+qualityToggle.addEventListener('change',syncSettings);
+let last=performance.now(), accumulator=0;
+function loop(now:number){
+  const dt=clamp((now-last)/1000,0,0.12);last=now;
+  if(screen==='race'&&race){
+    accumulator+=dt;
+    while(accumulator>=DT){race.step(DT);accumulator-=DT;}
+    hud(race);
+    sound.update(race);
+    if(race.done)endRace(race);
+  }
+  if(screen!=='error')view?.frame(dt,race,screen==='home');
+  requestAnimationFrame(loop);
+}
+try{
+  const canvas=el<HTMLCanvasElement>('world');
+  view=new View(canvas);
+  view.quality=settings.quality;
+  canvas.addEventListener('webglcontextlost',e=>{
+    e.preventDefault();
+    el('errorMessage').textContent='The graphics context was interrupted. Reload to return to the starting gate.';
+    show('error');
+  });
+  view.reset(new Track(COURSES[0]));
+  requestAnimationFrame(loop);
+}catch(error){console.error(error);show('error');}
