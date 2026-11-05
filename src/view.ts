@@ -1,6 +1,8 @@
 import * as T from 'three';
+import {DEFAULT_CONDITIONS, wetness, type Conditions} from './conditions';
+import {RaceEffects} from './race-effects';
 import {RiderVisibility} from './visibility';
-import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, RECORDED_CRASH_TIME, CrashKind } from './race';
+import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, RECORDED_CRASH_TIME, CrashKind, type CrowdKind } from './race';
 const PALETTES = [
   { sky:0x79c1c6, fog:0x9fcbd0, dirt:0xb97449, soil:0x875139, grass:0x646f47, rock:0xa78b65, far:0x749995, trim:0xf3ddd2, sun:0xffdd9d },
   { sky:0x9eaac8, fog:0xb0a9c1, dirt:0x9d704e, soil:0x63525b, grass:0x6d6578, rock:0x8a7886, far:0x7b7e9c, trim:0xebc8b9, sun:0xffba83 },
@@ -313,7 +315,7 @@ class RaceCrowd {
   private readonly fans:{x:number;y:number;z:number;phase:number;color:number;skin:number}[]=[];
   private readonly pose=new T.Object3D();
   private response=0;
-  private mood:'cheer'|'gasp'='cheer';
+  private mood:CrowdKind='landing';
   constructor(readonly distance:number,track:Track,rng:()=>number){
     const colors=[0xff514d,0xffd99b,0x65a7a9,0xf4ae44,0xb785cc,0xf5e9ce];
     const p=track.pose(distance,-10.0);
@@ -339,8 +341,10 @@ class RaceCrowd {
     this.group.add(this.actors);
     this.update(0,0,0,true);
   }
-  react(kind:'cheer'|'gasp',strength:number){
-    this.mood=kind;this.response=Math.max(this.response,strength);
+  react(kind:CrowdKind,strength:number){
+    if(this.mood==='finish'&&kind!=='finish'&&this.response>0.3)return;
+    this.mood=kind;
+    this.response=Math.max(this.response*0.48,strength);
   }
   private part(i:number,x:number,y:number,z:number,w:number,h:number,d:number,tilt=0,roll=0){
     this.pose.position.set(x,y,z);this.pose.scale.set(w,h,d);
@@ -348,19 +352,21 @@ class RaceCrowd {
     this.actors.setMatrixAt(i,this.pose.matrix);
   }
   update(time:number,dt:number,near:number,visible:boolean){
-    this.response=Math.max(0,this.response-dt*0.48);
+    this.response=Math.max(0,this.response-dt*(this.mood==='gasp'?1.1:this.mood==='pass'?0.86:0.52));
     if(!visible)return;
-    const cheer=this.mood==='cheer'?this.response:0,gasp=this.mood==='gasp'?this.response:0;
+    const cheer=this.mood==='gasp'?0:this.response,gasp=this.mood==='gasp'?this.response:0;
     this.fans.forEach((fan,i)=>{
       const beat=Math.sin(time*7+fan.phase), bounce=Math.max(0,beat);
-      const rise=near*(0.07+bounce*0.17)+cheer*(0.48+bounce*0.33)-gasp*0.19;
+      const wave=this.mood==='pass'?Math.max(0,Math.sin(time*8-fan.x*0.7)):1;
+      const amplitude=this.mood==='lap'||this.mood==='finish'?1.2:1;
+      const rise=near*(0.07+bounce*0.17)+cheer*wave*amplitude*(0.48+bounce*0.33)-gasp*0.19;
       const y=fan.y+rise,z=fan.z-gasp*0.30;
       this.part(i*5,fan.x,y,z,0.43,0.50,0.42,-gasp*0.41);
       this.part(i*5+1,fan.x,y+0.40,z-gasp*0.15,0.30,0.31,0.31);
       this.part(i*5+2,fan.x,y+0.58,z-gasp*0.15,0.33,0.065,0.33);
       for(let j=0;j<2;j++){
         const side=j?1:-1;
-        const lift=clamp(near*(0.39+beat*0.26)+cheer*1.12,0,1);
+        const lift=clamp(near*(0.39+beat*0.26)+cheer*wave*1.12,0,1);
         this.part(i*5+3+j,fan.x+side*(0.25+lift*0.07),y+0.03+lift*0.49,z+gasp*0.27,
           0.14,0.55,0.15,gasp*1.17,side*(0.25+lift*0.38));
       }
@@ -381,6 +387,13 @@ export class View {
   private wasFirstPerson=false;
   reduceMotion=false;
   private renderer: T.WebGLRenderer;
+  private readonly hemi=new T.HemisphereLight(0xffecd0,0x8b7f87,2.05);
+  private readonly sun=new T.DirectionalLight(0xffead3,2);
+  private readonly effects=new RaceEffects(this.scene);
+  private readonly flags:{flag:T.Group; x:number}[]=[];
+  private conditions=DEFAULT_CONDITIONS;
+  private lightBase=2;
+  private weatherAge=0;
   private world=new T.Group();
   private riders:RiderView[]=[];
   private crowds:RaceCrowd[]=[];
@@ -400,14 +413,17 @@ export class View {
   constructor(canvas:HTMLCanvasElement) {
     this.renderer=new T.WebGLRenderer({canvas, antialias:true,powerPreference:'high-performance'});
     this.renderer.outputColorSpace=T.SRGBColorSpace;
-    this.scene.add(new T.HemisphereLight(0xffecd0,0x8b7f87,2.05));
-    const sun=new T.DirectionalLight(0xffead3,2.0); sun.position.set(-12,18,8); this.scene.add(sun);
+    this.scene.add(this.hemi,this.sun);
     this.scene.add(this.world);
     this.dust=new T.InstancedMesh(cube,new T.MeshStandardMaterial({roughness:1}),84);
     this.dust.count=0; this.dust.frustumCulled=false; this.scene.add(this.dust);
   }
-  reset(track:Track) {
+  reset(track:Track,conditions:Conditions=DEFAULT_CONDITIONS) {
     this.track=track;
+    this.conditions=conditions;
+    this.weatherAge=0;
+    this.flags.length=0;
+    this.effects.reset(track,conditions);
     this.visibility.reset();
     this.world.traverse(o=>{if (o instanceof T.InstancedMesh) o.dispose(); else if(o instanceof T.Mesh && o.geometry !== cube) { o.geometry.dispose(); o.material.map?.dispose(); o.material.dispose(); }});
     this.world.clear();
@@ -419,7 +435,22 @@ export class View {
     this.riders=[];
     this.cameraReady=false;this.particles=[];this.targetX=5.7;this.targetY=0;this.targetZ=1.2;
     const palette=PALETTES[track.course.theme];
-    this.scene.background=new T.Color(palette.sky);this.scene.fog=new T.Fog(palette.fog,30,125);
+    const night=conditions.light==='Night', wet=conditions.weather!=='Clear';
+    const sky=new T.Color(palette.sky);
+    const fog=new T.Color(palette.fog);
+    const light=conditions.light;
+    if(light==='Morning'){sky.lerp(new T.Color(0xbad9ed),0.55);fog.lerp(new T.Color(0xc2d2df),0.55);}
+    if(light==='Evening'){sky.lerp(new T.Color(0xf2916d),0.7);fog.lerp(new T.Color(0xa26371),0.45);}
+    if(night){sky.setHex(0x111b31);fog.setHex(0x202d47);}
+    if(wet){sky.lerp(new T.Color(night?0x101829:0x667883),0.45);fog.lerp(sky,0.52);}
+    this.scene.background=sky;
+    this.scene.fog=new T.Fog(fog,night?24:wet?23:light==='Morning'?25:30,night?99:wet?94:125);
+    this.hemi.color.setHex(night?0x9cbcff:light==='Morning'?0xe7f6ff:0xffecd0);
+    this.hemi.intensity=(night?0.90:light==='Evening'?1.55:2.05)*(wet?0.87:1);
+    this.sun.position.set(-12,night?12:light==='Evening'?5:light==='Morning'?8:18,8);
+    this.sun.color.setHex(night?0x879de7:light==='Evening'?0xffb57a:0xffead3);
+    this.lightBase=(night?0.35:light==='Evening'?1.65:2)*(wet?0.68:1);
+    this.sun.intensity=this.lightBase;
     const rng=seeded(632+track.course.theme);
     const meshMaterial=new T.MeshStandardMaterial({vertexColors:true,roughness:1,side:T.DoubleSide});
     const loop=!!track.circuit;
@@ -455,7 +486,7 @@ export class View {
           const paint=surface==='mud'?0x614235:surface==='cool'?0x267d76:surface==='rough'?0x697158:
             surface==='trap'?0x644d45:surface==='bump'?(j%2?0xe6d8c6:0xb42639):palette.dirt;
           color.setHex(paint)
-            .multiplyScalar((j%2?1:0.97)*(0.92+rng()*0.14));
+            .multiplyScalar((j%2?1:0.97)*(0.92+rng()*0.14)*(1-wetness(track,conditions,(a+b)/2,z,surface)*0.37));
           vertex(a,track.height(a,z0),z0);vertex(a,track.height(a,z1),z1);vertex(b,track.height(b,z0),z0);
           vertex(a,track.height(a,z1),z1);vertex(b,track.height(b,z1),z1);vertex(b,track.height(b,z0),z0);
         }
@@ -567,7 +598,13 @@ export class View {
         if(track.course.theme===0 && rng()<0.64){
           const flag=[0xc83242,0xf5e3d3,0xa72f38][Math.floor(rng()*3)];
           block(x,2.65,-8.35,0.105,5.45,0.1,0x5c6057);
-          for(let j=0;j<3;j++)block(x+0.29+j*0.31,4.86+j*0.035,-8.35,0.34,0.74-j*0.19,0.105,flag);
+          if(wet&&track.clearOfOtherRoad(x,-8.35,0.65,4.86)){
+            const fabric=new T.Group();
+            this.place(fabric,x,4.86,-8.35);
+            for(let j=0;j<3;j++)box(fabric,flag,0.29+j*0.31,j*0.035,0,0.34,0.74-j*0.19,0.105);
+            this.world.add(fabric);this.flags.push({flag:fabric,x});
+            this.visibility.addGroup(fabric);
+          }else for(let j=0;j<3;j++)block(x+0.29+j*0.31,4.86+j*0.035,-8.35,0.34,0.74-j*0.19,0.105,flag);
         }
         if(rng()<0.42){
           block(x,1.96,-8.25,0.19,5.5,0.2,0x374754);
@@ -680,7 +717,7 @@ export class View {
       if(rival)this.visibility.addGroup(view.root);
       this.riders.push(view);
     }
-    const ghost=race?.ghost;
+    const ghost=race.ghost;
     if(ghost&&this.riders.length===n)this.riders.push(makeRider(this.scene,0xbafcf2,true));
     const showGhost=ghost && race.time>=0 && race.time<=ghost.frames[ghost.frames.length-1][0];
     if(showGhost){
@@ -691,7 +728,7 @@ export class View {
         pitch:blend(a[4],b[4],t),spin:blend(a[5],b[5],t),impact:0,
         crash:(a[7]===b[7]?blend(a[6],b[6],t):a[6])*CRASH_TIME/RECORDED_CRASH_TIME,crashKind:a[7],lean:blend(a[8],b[8],t),side:a[9]});
     }
-    const firstPerson=this.cameraIndex===4&&!r.crash;
+    const firstPerson=this.cameraIndex===4&&!r.crash&&!r.finish;
     this.riders.forEach((view,i)=>{
       const bike=bikes[i];
       view.root.visible=!!bike;
@@ -717,11 +754,13 @@ export class View {
     if(race&&race.time>0&&!race.done&&this.elapsed-this.lastDust>0.034){
       this.lastDust=this.elapsed;
       for(const bike of bikes.slice(0,n)){
-        if(bike.air||(!bike.crash&&bike.speed<4)||this.particles.length>=84)continue;
+        if(bike.finish||bike.air||(!bike.crash&&bike.speed<4)||this.particles.length>=84)continue;
         if(bike.crash && CRASH_TIME-bike.crash>0.8)continue;
         const surface=this.track.surface(bike.x,bike.z);
         const mud=surface==='mud'||surface==='trap';
-        this.particles.push({x:bike.x-0.92,y:bike.y-0.5,z:bike.z+(Math.random()-0.5)*0.49,life:0.45,size:0.12+Math.random()*0.18,color:mud?0x785847:0xcd9b73});
+        const wet=wetness(this.track,this.conditions,bike.x,bike.z,surface)>0;
+        const spray=wet?(mud?0x654c3c:0x88a4ac):mud?0x785847:0xcd9b73;
+        this.particles.push({x:bike.x-0.92,y:bike.y-0.5,z:bike.z+(Math.random()-0.5)*(wet?0.92:0.49),life:wet?0.32:0.45,size:0.12+Math.random()*0.18,color:spray});
       }
     }
     this.particles=this.particles.filter(p=>p.life>0);
@@ -736,17 +775,28 @@ export class View {
     });
     this.dust.instanceMatrix.needsUpdate=true;
     if(this.dust.instanceColor)this.dust.instanceColor.needsUpdate=true;
-    const crowdEvent=race.crowd;
-    const newEvent=!!crowdEvent&&crowdEvent.serial!==this.crowdSerial;
-    if(crowdEvent&&newEvent)this.crowdSerial=crowdEvent.serial;
+    const events=race.crowd.filter(event=>event.serial>this.crowdSerial);
+    this.crowdSerial=events.at(-1)?.serial??this.crowdSerial;
     for(const crowd of this.crowds){
-      if(newEvent){
-        const distance=Math.abs(this.track.delta(crowd.distance,crowdEvent.x));
-        if(distance<58)crowd.react(crowdEvent.kind,1-distance/88);
+      for(const event of events){
+        const distance=Math.abs(this.track.delta(crowd.distance,event.x));
+        const reach=event.kind==='finish'||event.kind==='lap'?53:34;
+        if(distance<reach)crowd.react(event.kind,(1-distance/(reach+24))*(this.reduceMotion?0.45:1));
       }
       const distance=Math.abs(this.track.delta(crowd.distance,r.x));
-      crowd.update(this.elapsed,dt,this.reduceMotion?0:clamp(1-distance/19,0,1),distance<105||newEvent);
+      crowd.update(this.elapsed,dt,this.reduceMotion?0:clamp(1-distance/19,0,1),distance<105||events.length>0);
     }
+    this.weatherAge=Math.max(0,race.time);
+    const wind=this.conditions.weather==='Thunderstorm'?1.5:this.conditions.weather==='Rain'?0.8:0.2;
+    for(const {flag,x} of this.flags){
+      if(Math.abs(this.track.delta(x,r.x))>105)continue;
+      const flutter=this.reduceMotion?0:Math.sin(this.weatherAge*8+x)*wind*0.16;
+      flag.rotation.x=flutter;
+      for(const [i,panel] of flag.children.entries())panel.position.z=flutter*(i+1)*0.72;
+    }
+    const storm=this.conditions.weather==='Thunderstorm'&&!this.reduceMotion;
+    const flashPhase=(this.weatherAge+2)%20;
+    this.sun.intensity=this.lightBase+(storm?Math.max(0,1-Math.abs(flashPhase-0.34)/0.28)*0.55:0);
     const aspect=this.camera.aspect, portrait=aspect<1;
     const lead=r.crashKind===CrashKind.Back?3.8:5.0;
     const ground=this.track.height(r.x,r.z), nearEdge=this.track.height(r.x-2,4.7);
@@ -758,7 +808,7 @@ export class View {
     const sideDepth=Math.max(14.9,23/aspect);
     const wideDepth=Math.max(21,30/aspect);
     let fov=portrait?44:33;
-    switch(this.cameraIndex){
+    switch(r.finish?3:this.cameraIndex){
       case 1:
         this.desiredPosition.set(x-7.8,y+11.0,z+wideDepth);
         this.desiredFocus.set(x+2.1,y+0.7,z-1.4);fov=38;
@@ -807,6 +857,7 @@ export class View {
     this.camera.lookAt(this.focus);
     this.cameraReady=true;
     this.camera.updateProjectionMatrix();
+    this.effects.frame(dt,this.weatherAge,this.camera,r,bikes.slice(0,n),this.riders,this.conditions,race.inputs.turbo,wind,this.quality,this.reduceMotion);
     this.scene.updateMatrixWorld(true);
     this.visibility.update(this.camera,this.riders[0].person,r.x,dt);
     this.renderer.render(this.scene,this.camera);

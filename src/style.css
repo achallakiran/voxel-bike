@@ -81,3 +81,18 @@ body{background:#3b2428}
 @keyframes studio-cursor{0%,49%{opacity:1}50%,100%{opacity:0}}
 @keyframes studio-prompt{0%,100%{opacity:.25}50%{opacity:.9}}
 @media(prefers-reduced-motion:reduce){#studioCursor,.studio-prompt{animation:none}}
+
+.race-options{display:flex;flex-wrap:wrap;gap:0 12px}
+.race-options .lap-setting{margin:0 0 8px}
+.finish-shot .touch,.finish-shot #cameraButton{visibility:hidden}
+.podium{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:end;gap:5px;margin:8px 0 12px;text-align:center}
+.podium-step{min-width:0;color:#fbeae5}
+.podium-step b,.podium-step small{display:block;line-height:1.35;overflow-wrap:anywhere}
+.podium-step small{font-size:10px;color:#e4cbc5;margin:2px 0 4px}
+.podium-rider{width:30px;height:30px;position:relative;margin:0 auto 4px;background:linear-gradient(0deg,#27262b 0 25%,var(--rider-color) 25% 56%,transparent 56%);clip-path:polygon(15% 54%,29% 54%,29% 4%,71% 4%,71% 54%,85% 54%,85% 82%,72% 82%,72% 100%,53% 100%,53% 84%,47% 84%,47% 100%,28% 100%,28% 82%,15% 82%);box-shadow:inset 0 13px var(--rider-color)}
+.podium-rider::after{content:'';position:absolute;top:7px;left:9px;width:12px;height:4px;background:#23272d}
+.podium-rank{display:grid;place-items:center;min-height:28px;background:#704c53;color:#fff4e7;box-shadow:inset 0 4px #ffffff24;font-size:18px}
+.rank-1 .podium-rank{min-height:48px;background:#a16b32}
+.rank-2 .podium-rank{min-height:38px;background:#676678}
+.podium-step.current b,.outside-podium{color:#ffd68c}
+#results .panel{max-height:calc(100% - 12px);overflow:auto}

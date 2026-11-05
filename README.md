@@ -9,6 +9,8 @@ Use **Z** for throttle, **X** for turbo, **↑/↓** to change lanes, **←/→*
 
 Time Trial saves your best run as a ghost when browser storage is available. Rival Race and Time Trial offer 3, 5 or 7 laps, with individual splits and the fastest lap in the results. Track Builder supports closed circuit and point-to-point layouts. The Track Builder supports JSON import and export, so custom courses can be moved between browsers and played offline.
 
+Select Morning, Noon, Evening or Night and Clear, Rain or Thunderstorm before a race. Rain changes braking and lane response. Night uses a headlight and reflective markers. Time Trial compares previous runs for the same conditions, and Rival Race ranks confirmed finishers on the podium.
+
 ## Build
 
 Run `npm ci`, `npm run check`, and `npm run build`. The build creates identical standalone HTML files in `dist/`. GitHub Pages serves the static release files at the repository root. For a release, copy `dist/index.html`, `dist/Voxel-Bikes-Offline.html`, and `dist/.nojekyll` to the root, then commit them with the source.
