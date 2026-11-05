@@ -14,11 +14,50 @@ function lightning(x:number,y:number,endX:number,endY:number):Arc {
   return {points,life:0.09+Math.random()*0.07,width:1+Math.random()*1.8};
 }
 
-export async function playStudioLogo(host:HTMLElement,onComplete:()=>void){
+function studioAudio(){
+  try{
+    const Audio=window.AudioContext??(window as Window & {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;
+    if(!Audio)return;
+    const context=new Audio();
+    if(context.state==='suspended')void context.resume().catch(()=>{});
+    const noise=context.createBuffer(1,Math.ceil(context.sampleRate*0.16),context.sampleRate);
+    const data=noise.getChannelData(0);
+    for(let i=0;i<data.length;i++)data[i]=Math.random()*2-1;
+    return {
+      zap(power:number){
+        if(context.state!=='running')return;
+        const now=context.currentTime;
+        const spark=context.createBufferSource(), filter=context.createBiquadFilter(), crack=context.createGain();
+        spark.buffer=noise;
+        filter.type='bandpass';filter.Q.value=1.3;
+        filter.frequency.setValueAtTime(3400,now);
+        filter.frequency.exponentialRampToValueAtTime(1250,now+0.13);
+        crack.gain.setValueAtTime(0.001,now);
+        crack.gain.exponentialRampToValueAtTime(0.34*power,now+0.009);
+        crack.gain.exponentialRampToValueAtTime(0.001,now+0.15);
+        spark.connect(filter).connect(crack).connect(context.destination);
+        spark.start(now);
+        const buzz=context.createOscillator(), envelope=context.createGain();
+        buzz.type='sawtooth';buzz.frequency.setValueAtTime(160,now);
+        buzz.frequency.exponentialRampToValueAtTime(72,now+0.16);
+        envelope.gain.setValueAtTime(0.001,now);
+        envelope.gain.exponentialRampToValueAtTime(0.065*power,now+0.015);
+        envelope.gain.exponentialRampToValueAtTime(0.001,now+0.18);
+        buzz.connect(envelope).connect(context.destination);
+        buzz.start(now);buzz.stop(now+0.19);
+      },
+      close(){void context.close().catch(()=>{});}
+    };
+  }catch{ /* The badge still plays if audio is unavailable. */ }
+}
+
+export async function playStudioLogo(host:HTMLElement,onComplete:()=>void,soundEnabled=true){
+  // Construct and resume audio during the user's tap or key press.
+  const sound=soundEnabled?studioAudio():undefined;
   const badge=new Image();
   badge.alt='ADA Studios logo';
   badge.src=STUDIO_BADGE;
-  try{await badge.decode();}catch{onComplete();return;}
+  try{await badge.decode();}catch{sound?.close();onComplete();return;}
 
   const canvas=document.createElement('canvas');
   const context=canvas.getContext('2d');
@@ -35,13 +74,18 @@ export async function playStudioLogo(host:HTMLElement,onComplete:()=>void){
   host.append(display);
   const duration=reduced||!context?1.8:3.6;
   const arcs:Arc[]=[];
-  let age=0,previous=performance.now(),nextArc=0;
+  let age=0,previous=performance.now(),nextArc=0,nextZap=0.08;
   function frame(now:number){
     const dt=Math.min(0.05,Math.max(0,(now-previous)/1000));
     previous=now;
     if(document.hidden||!display.getClientRects().length){requestAnimationFrame(frame);return;}
     age+=dt;
-    if(age>=duration){display.remove();onComplete();return;}
+    if(age>=duration){display.remove();sound?.close();onComplete();return;}
+    if(age>=nextZap){
+      const surge=age<0.8||age>duration-0.65;
+      sound?.zap(surge?1:0.46);
+      nextZap=age+(reduced?duration:surge?0.28:0.70);
+    }
     if(display===canvas&&context){
       const w=canvas.clientWidth,h=canvas.clientHeight,dpr=Math.min(2,window.devicePixelRatio||1);
       if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){

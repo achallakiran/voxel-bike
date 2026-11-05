@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#ba202b">
-<meta name="description" content="Voxel Bikes is an offline-ready arcade motocross racer with time trials, rival races, and a track builder.">
+<meta name="description" content="Voxel Bikes is an offline-ready arcade motocross racer with time trials and rival races.">
 <title>Voxel Bikes · Redline Series</title>
 <style>/* STYLE */</style>
 </head>
@@ -28,7 +28,6 @@
     <nav class="pit-board" aria-label="Main menu">
       <button data-mode="trial" class="pit-button"><span>01</span> Time Trial</button>
       <button data-mode="rival" class="pit-button"><span>02</span> Rival Race</button>
-      <button id="builderButton" class="pit-button"><span>03</span> Track Builder</button>
     </nav>
     <div class="pit-tools">
       <button id="settingsButton" class="pit-icon" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></button>
@@ -56,30 +55,6 @@
       <p class="touch-help" id="touchHelp"></p>
       <dl class="keylist"><div><dt>Lane</dt><dd id="laneKeys">↑ / ↓</dd></div><div><dt>Pitch</dt><dd id="pitchKeys">← / →</dd></div><div><dt>Throttle</dt><dd>Z</dd></div><div><dt>Brake</dt><dd>Space</dd></div><div><dt>Turbo</dt><dd>X</dd></div><div><dt>Camera</dt><dd>C</dd></div><div><dt>Pause</dt><dd>Esc</dd></div></dl>
       <button class="text-button" data-home>← Main menu</button>
-    </div>
-  </section>
-
-  <section id="builder" class="screen overlay" hidden>
-    <div class="panel builder-panel">
-      <div class="eyebrow">Workshop / Course Editor</div><h2>Track Builder</h2>
-      <div class="builder-options">
-        <input id="trackName" maxlength="36" aria-label="Track name" value="My Track">
-        <select id="theme" aria-label="Track setting"><option value="0">Clay arena</option><option value="1">Quarry</option><option value="2">Mud fair</option><option value="3">Foundry</option><option value="4">White ridge</option></select>
-        <select id="trackShape" aria-label="Track shape"><option value="loop">Closed circuit</option><option value="straight">Point to point</option></select>
-      </div>
-      <div id="palette" class="palette" aria-label="Track pieces"></div>
-      <div id="layout" class="layout" aria-label="Track layout"></div>
-      <div class="editor-tools">
-        <span id="layoutInfo"></span>
-        <button id="earlier" class="text-button" aria-label="Move piece earlier">← Move</button>
-        <button id="later" class="text-button" aria-label="Move piece later">Move →</button>
-        <button id="remove" class="text-button">Remove</button>
-      </div>
-      <div class="builder-footer">
-        <button id="testTrack" class="solid">Test ride ↗</button><button id="export" class="text-button">Export</button><button id="import" class="text-button">Import</button>
-        <button class="text-button" data-home>← Menu</button>
-      </div>
-      <div id="builderStatus" role="status"></div><input id="fileInput" type="file" accept=".json,application/json" hidden>
     </div>
   </section>
 

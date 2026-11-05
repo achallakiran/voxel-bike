@@ -7,7 +7,7 @@ An offline-ready voxel motocross game inspired by NES-era arcade racing. The Red
 
 Use **Z** for throttle, **X** for turbo, **↑/↓** to change lanes, **←/→** to raise or lower the nose, **Space** to brake, **C** to cycle the race camera, and **Esc** to pause. On a touch device, rotate to landscape. In Hero Side, Broadcast and Front Quarter, move the stick vertically to change lanes and horizontally to pitch the bike. In Rear Chase and First Person, use left/right for lanes and down/up to lift/lower the nose. Arrow keys follow the same mapping. The gauge icon controls throttle, the disc icon controls the brake, and the bolt is turbo.
 
-Time Trial saves your best run as a ghost when browser storage is available. Rival Race and Time Trial offer 3, 5 or 7 laps, with individual splits and the fastest lap in the results. Track Builder supports closed circuit and point-to-point layouts. The Track Builder supports JSON import and export, so custom courses can be moved between browsers and played offline.
+Time Trial saves your best run as a ghost when browser storage is available. Rival Race and Time Trial offer 3, 5 or 7 laps, with individual splits and the fastest lap in the results.
 
 Select Morning, Noon, Evening or Night and Clear, Rain or Thunderstorm before a race. Rain changes braking and lane response. Night uses a headlight and reflective markers. Time Trial compares previous runs for the same conditions, and Rival Race ranks confirmed finishers on the podium.
 

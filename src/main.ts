@@ -1,13 +1,12 @@
 import {playStudioLogo} from './studio-logo';
-import {COURSES, PIECES, DT, Track, Race, clamp, type Course, type Piece, type Mode, type RecordRun} from './race';
-import {conditionKey, DEFAULT_CONDITIONS, type Conditions} from './conditions';
-import {pieceSpec} from './tracks';
+import {COURSES, DT, Track, Race, clamp, type Course, type Mode, type RecordRun} from './race';
+import {conditionKey, type Conditions} from './conditions';
 import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
-type Screen = 'intro'|'home'|'select'|'settings'|'builder'|'race'|'pause'|'results'|'rotate'|'error';
+type Screen = 'intro'|'home'|'select'|'settings'|'race'|'pause'|'results'|'rotate'|'error';
 type Action = 'up'|'down'|'back'|'forward'|'gas'|'brake'|'turbo';
-const screens: Screen[]=['intro','home','select','settings','builder','race','pause','results','rotate','error'];
+const screens: Screen[]=['intro','home','select','settings','race','pause','results','rotate','error'];
 const keys: Record<string, Action> = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'back',ArrowRight:'forward',KeyZ:'gas',Space:'brake',KeyX:'turbo'};
 const rearKeys: Record<string,Action> = {ArrowUp:'forward',ArrowDown:'back',ArrowLeft:'up',ArrowRight:'down'};
 const prefix='voxel-bikes:v1:';
@@ -124,19 +123,6 @@ class Sound {
     o.connect(g).connect(this.ctx.destination);o.start();o.stop(now+duration);
   }
 }
-interface Draft {format:'voxel-bikes-track';version:1;name:string;theme:number;layout:Piece[];loop?:boolean}
-const defaultDraft:Draft={format:'voxel-bikes-track',version:1,name:'My Track',theme:0,loop:true,
-  layout:['tabletop','cool','rollers','mud','double','straight']};
-function validDraft(value:unknown):value is Draft {
-  if(!value||typeof value!=='object')return false;
-  const d=value as Draft;
-  return d.format==='voxel-bikes-track'&&d.version===1&&typeof d.name==='string'&&d.name.length<=36&&
-    (d.loop===undefined||typeof d.loop==='boolean')&&Number.isInteger(d.theme)&&d.theme>=0&&d.theme<=4&&Array.isArray(d.layout)&&d.layout.length<=28&&
-    d.layout.every(p=>typeof p==='string'&&Object.hasOwn(PIECES,p));
-}
-let draft=load('draft',defaultDraft);
-if(!validDraft(draft))draft=defaultDraft;
-let selected=-1;
 let screen:Screen='intro', mode:Mode='trial', race:Race|undefined;
 let course:Course=COURSES[0];
 const held=new Map<string,Action>();
@@ -169,10 +155,6 @@ function pastTimes(key:string,best:number|undefined){
 const savedLaps=load('raceLaps',3);
 let raceLaps=[3,5,7].includes(savedLaps)?savedLaps:3;
 lapSetting.value=String(raceLaps);
-const nameInput=el<HTMLInputElement>('trackName');
-const themeInput=el<HTMLSelectElement>('theme');
-const shapeInput=el<HTMLSelectElement>('trackShape');
-const fileInput=el<HTMLInputElement>('fileInput');
 const runRecords=new Map<string,RecordRun>();
 let view:View|undefined;
 let countdown='', lastSignal='';
@@ -235,7 +217,7 @@ button('studioContinue',()=>{
   if(screen!=='intro'||studioContinue.hidden)return;
   window.clearInterval(studioTimer);
   studioContinue.hidden=true;
-  void playStudioLogo(el('intro'),home);
+  void playStudioLogo(el('intro'),home,sound.enabled);
 });
 function home(){
   race=undefined;
@@ -279,14 +261,12 @@ function renderCourses(){
 function start(c:Course){
   if(!view)return;
   course=c;
-  const track=new Track(course,mode==='test'?1:raceLaps);
-  const conditions=mode==='test'?DEFAULT_CONDITIONS:selectedConditions();
+  const track=new Track(course,raceLaps);
+  const conditions=selectedConditions();
   view.reset(track,conditions);
   race=new Race(track,mode,mode==='trial'?storedRun(recordKey(course.id,track.laps,conditions)):undefined,conditions);
   sound.resetCrowd();sound.unlock();
   el('courseLabel').textContent=course.name.toUpperCase();
-  el('pauseExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
-  el('resultExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
   countdown='';lastSignal='';accumulator=0;
   el('race').classList.remove('finish-shot');
   hud(race);
@@ -321,7 +301,7 @@ function showPodium(entries:PodiumEntry[]){
   el('podium').hidden=!entries.length;
 }
 function endRace(finished:Race){
-  el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':mode==='trial'?'Time Trial':'Test Ride');
+  el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':'Time Trial');
   el('resultTime').textContent=clock(finished.elapsed);
   let title='Run complete',detail='Course cleared';
   let podium:PodiumEntry[]=[];
@@ -397,11 +377,6 @@ function hud(r:Race){
   }
   lastSignal=cue??'';
 }
-function exitRace(){
-  if(mode==='test'){
-    race=undefined;showBuilder();
-  }else home();
-}
 function orientation(){
   if(screen==='rotate'){
     if(!coarse.matches||!portrait.matches)show(rotationReturn);
@@ -474,7 +449,7 @@ window.addEventListener('keydown',e=>{
   if(e.code==='Escape'){
     if(screen==='race')show('pause');
     else if(screen==='pause'){show('race');}
-    else if(screen==='rotate'&&race)exitRace();
+    else if(screen==='rotate'&&race)home();
     return;
   }
   if(e.code==='KeyC'&&screen==='race'){
@@ -499,86 +474,8 @@ for(const b of tapButtons){
   const release=(e:PointerEvent)=>{if(held.delete('touch:'+e.pointerId))readInput();};
   b.addEventListener('pointerup',release);b.addEventListener('pointercancel',release);b.addEventListener('lostpointercapture',release);
 }
-function renderDraft(scroll=false){
-  const layout=el('layout');
-  layout.replaceChildren(...draft.layout.map((piece,i)=>{
-    const b=document.createElement('button');
-    b.textContent=(i+1)+' · '+(pieceSpec(piece).code??pieceSpec(piece).icon)+' '+pieceSpec(piece).name;
-    b.setAttribute('aria-pressed',String(i===selected));
-    b.addEventListener('click',()=>{selected=i;renderDraft();(layout.children[i] as HTMLButtonElement | undefined)?.focus({preventScroll:true});});
-    return b;
-  }));
-  if(scroll&&selected>=0)layout.children[selected]?.scrollIntoView({block:'nearest',inline:'nearest'});
-  el('layoutInfo').textContent=draft.layout.length+' / 28 pieces';
-  el<HTMLButtonElement>('earlier').disabled=selected<=0;
-  el<HTMLButtonElement>('later').disabled=selected<0||selected===draft.layout.length-1;
-  el<HTMLButtonElement>('remove').disabled=selected<0;
-  el<HTMLButtonElement>('testTrack').disabled=draft.layout.length===0;
-  for(const b of el('palette').querySelectorAll('button'))b.disabled=draft.layout.length>=28;
-}
-function commitDraft(message='',scroll=false){
-  const saved=save('draft',draft);
-  el('builderStatus').textContent=message||(!saved?'Draft available this session. Export to keep a copy.':'');
-  renderDraft(scroll);
-}
-function showBuilder(){
-  nameInput.value=draft.name;
-  themeInput.value=String(draft.theme);
-  shapeInput.value=draft.loop?'loop':'straight';
-  renderDraft();show('builder');
-}
-for(const piece of Object.keys(PIECES) as Piece[]){
-  const detail=pieceSpec(piece);
-  const b=document.createElement('button');
-  b.innerHTML='<span class="piece-icon">'+(detail.code??detail.icon)+'</span>'+detail.name;
-  b.addEventListener('click',()=>{
-    if(draft.layout.length>=28)return;
-    selected=draft.layout.length;
-    draft={...draft,layout:[...draft.layout,piece as Piece]};commitDraft('',true);
-  });
-  el('palette').append(b);
-}
-nameInput.addEventListener('input',()=>{draft={...draft,name:nameInput.value};commitDraft();});
-themeInput.addEventListener('change',()=>{draft={...draft,theme:Number(themeInput.value)};commitDraft();});
-shapeInput.addEventListener('change',()=>{draft={...draft,loop:shapeInput.value==='loop'};commitDraft();});
-function movePiece(dir:number){
-  const dest=selected+dir;
-  if(selected<0||dest<0||dest>=draft.layout.length)return;
-  const layout=[...draft.layout];
-  [layout[selected],layout[dest]]=[layout[dest],layout[selected]];
-  draft={...draft,layout};selected=dest;commitDraft('',true);
-}
-button('earlier',()=>movePiece(-1));button('later',()=>movePiece(1));
-button('remove',()=>{
-  if(selected<0)return;
-  draft={...draft,layout:draft.layout.filter((_,i)=>i!==selected)};
-  selected=Math.min(selected,draft.layout.length-1);commitDraft();
-});
-button('testTrack',()=>{
-  if(!draft.layout.length)return;
-  mode='test';
-  start({id:'custom',name:draft.name.trim()||'My Track',theme:draft.theme,tagline:'',gold:0,loop:draft.loop,layout:[...draft.layout]});
-});
-button('export',()=>{
-  const url=URL.createObjectURL(new Blob([JSON.stringify(draft,null,2)],{type:'application/json'}));
-  const a=document.createElement('a');
-  a.href=url;a.download=(draft.name.trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'voxel-bikes-track')+'.json';
-  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-});
-button('import',()=>fileInput.click());
-fileInput.addEventListener('change',async()=>{
-  const file=fileInput.files?.[0];fileInput.value='';
-  if(!file)return;
-  try{
-    if(file.size>64*1024)throw new Error('File too large');
-    const incoming:unknown=JSON.parse(await file.text());
-    if(!validDraft(incoming))throw new Error('Invalid course');
-    draft=incoming;selected=-1;showBuilder();commitDraft('Track imported.');
-  }catch{el('builderStatus').textContent='Could not import this Voxel Bikes track.';}
-});
 for(const b of document.querySelectorAll<HTMLButtonElement>('[data-mode]'))b.addEventListener('click',()=>choose(b.dataset.mode as Mode));
 for(const b of document.querySelectorAll<HTMLButtonElement>('[data-home]'))b.addEventListener('click',home);
-button('builderButton',showBuilder);
 button('settingsButton',()=>show('settings'));
 button('offline',()=>{
   const a=document.createElement('a');a.href='./Voxel-Bikes-Offline.html';a.download='Voxel-Bikes-Offline.html';
@@ -589,7 +486,7 @@ button('cameraButton',nextCamera);
 button('pauseButton',()=>show('pause'));
 button('resume',()=>{sound.unlock();show('race');});
 button('restart',()=>start(course));button('retry',()=>start(course));
-button('pauseExit',exitRace);button('resultExit',exitRace);button('rotateExit',exitRace);
+button('pauseExit',home);button('resultExit',home);button('rotateExit',home);
 button('reload',()=>location.reload());
 const soundToggle=el<HTMLInputElement>('sound'), qualityToggle=el<HTMLInputElement>('quality');
 const cameraSetting=el<HTMLSelectElement>('cameraSetting');

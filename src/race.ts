@@ -7,7 +7,7 @@ export const CRASH_TIME=2.85;
 // Keep crash samples compatible with ghosts recorded before the longer recovery.
 export const RECORDED_CRASH_TIME=1.38;
 export interface Controls { gas: boolean; brake: boolean; turbo: boolean; pitch: number }
-export type Mode = 'trial' | 'rival' | 'test';
+export type Mode = 'trial' | 'rival';
 export type Feedback = 'Clean landing' | 'Rough landing' | 'Wipeout' | 'Loop-out' | 'Overheated' | 'Cooling' | 'Contact' | 'Bump' | 'Bump crash' | 'Dirt trap crash' | `Lap ${number}`;
 export type CrowdKind = 'gasp' | 'landing' | 'pass' | 'lap' | 'finish';
 export interface CrowdEvent {kind:CrowdKind; x:number; serial:number; time:number}
