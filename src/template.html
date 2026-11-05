@@ -12,12 +12,19 @@
 <canvas id="world" aria-label="Voxel Bikes 3D motocross track"></canvas>
 <div id="vignette"></div>
 <main id="ui">
-  <section id="home" class="screen home">
+  <section id="intro" class="screen">
+    <button id="studioContinue" class="studio-card" aria-label="ADA Studios presents. Continue to Voxel Bikes">
+      <span class="studio-credit" aria-hidden="true"><span id="studioFirst"></span><span id="studioCursor"></span>
+<span id="studioSecond"></span></span>
+      <span class="studio-prompt" aria-hidden="true">[ TAP TO CONTINUE ]</span>
+    </button>
+  </section>
+  <section id="home" class="screen home" hidden>
     <div class="title-plate">
-      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 05</div>
+      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 06</div>
       <h1>VOXEL<span>BIKES</span></h1>
     </div>
-    <div class="race-number" aria-hidden="true">05</div>
+    <div class="race-number" aria-hidden="true">06</div>
     <nav class="pit-board" aria-label="Main menu">
       <button data-mode="trial" class="pit-button"><span>01</span> Time Trial</button>
       <button data-mode="rival" class="pit-button"><span>02</span> Rival Race</button>
@@ -43,9 +50,9 @@
       <div class="eyebrow">Pit Lane</div><h2>Settings</h2>
       <label class="setting">Engine &amp; race audio <input type="checkbox" id="sound" checked></label>
       <label class="setting">High-resolution rendering <input type="checkbox" id="quality" checked></label>
-      <label class="setting">Race camera <select id="cameraSetting"><option value="0">Hero side</option><option value="1">Broadcast</option><option value="2">Rear chase</option><option value="3">Front quarter</option></select></label>
-      <p class="touch-help">Touch stick ↑ ↓ changes lanes. Pull left to lift the nose, right to lower it. The gauge is throttle, the disc is brake, and the bolt is turbo.</p>
-      <dl class="keylist"><div><dt>Lane</dt><dd>↑ / ↓</dd></div><div><dt>Pitch</dt><dd>← / →</dd></div><div><dt>Throttle</dt><dd>Z</dd></div><div><dt>Brake</dt><dd>Space</dd></div><div><dt>Turbo</dt><dd>X</dd></div><div><dt>Camera</dt><dd>C</dd></div><div><dt>Pause</dt><dd>Esc</dd></div></dl>
+      <label class="setting">Race camera <select id="cameraSetting"><option value="0">Hero side</option><option value="1">Broadcast</option><option value="2">Rear chase</option><option value="3">Front quarter</option><option value="4">First person</option></select></label>
+      <p class="touch-help" id="touchHelp"></p>
+      <dl class="keylist"><div><dt>Lane</dt><dd id="laneKeys">↑ / ↓</dd></div><div><dt>Pitch</dt><dd id="pitchKeys">← / →</dd></div><div><dt>Throttle</dt><dd>Z</dd></div><div><dt>Brake</dt><dd>Space</dd></div><div><dt>Turbo</dt><dd>X</dd></div><div><dt>Camera</dt><dd>C</dd></div><div><dt>Pause</dt><dd>Esc</dd></div></dl>
       <button class="text-button" data-home>← Main menu</button>
     </div>
   </section>
@@ -84,7 +91,7 @@
         <button id="pauseButton" class="square" aria-label="Pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14m6-14v14"/></svg></button>
       </div>
     </div>
-    <div id="countdown" class="countdown"></div><div id="feedback" class="feedback" hidden></div>
+    <div id="countdown" class="countdown"></div>
     <div class="touch">
       <div id="joystick" class="joystick" aria-label="Touch joystick" role="group">
         <svg viewBox="0 0 100 100" aria-hidden="true"><path d="m46 13 4-4 4 4m-8 74 4 4 4-4M13 46l-4 4 4 4m74-8 4 4-4 4"/></svg>
@@ -110,7 +117,7 @@
       <div class="stack"><button id="retry" class="solid">Race again ↗</button><button id="resultExit" class="text-button">← Main menu</button></div>
     </div>
   </section>
-  <section id="rotate" class="screen overlay" hidden><div class="panel compact rotate-panel"><span class="phone" aria-hidden="true"></span><h2>Rotate to ride</h2><button id="rotateExit" class="text-button">← Exit race</button></div></section>
+  <section id="rotate" class="screen overlay" hidden><div class="panel compact rotate-panel"><span class="phone" aria-hidden="true"></span><h2>Rotate to ride</h2><p>Turn your device to landscape.</p><button id="rotateExit" class="text-button">← Exit race</button></div></section>
   <section id="error" class="screen overlay" hidden><div class="panel compact"><h2>3D could not start</h2><p id="errorMessage">This game requires WebGL 2. Enable browser graphics acceleration and reopen the game.</p><button id="reload" class="solid">Reload</button></div></section>
 </main>
 <script>/* BUNDLE */</script>

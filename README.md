@@ -5,7 +5,7 @@ An offline-ready voxel motocross game inspired by NES-era arcade racing. The Red
 - [Play on GitHub Pages](https://achallakiran.github.io/voxel-bike/)
 - [Download the self-contained HTML](https://achallakiran.github.io/voxel-bike/Voxel-Bikes-Offline.html) and open it in a WebGL 2 browser.
 
-Use **Z** for throttle, **X** for turbo, **↑/↓** to change lanes, **←/→** to raise or lower the nose, **Space** to brake, **C** to cycle the race camera, and **Esc** to pause. On a touch device, rotate to landscape. Move the stick vertically to change lanes and horizontally to pitch the bike. The gauge icon controls throttle, the disc icon controls the brake, and the bolt is turbo.
+Use **Z** for throttle, **X** for turbo, **↑/↓** to change lanes, **←/→** to raise or lower the nose, **Space** to brake, **C** to cycle the race camera, and **Esc** to pause. On a touch device, rotate to landscape. In Hero Side, Broadcast and Front Quarter, move the stick vertically to change lanes and horizontally to pitch the bike. In Rear Chase and First Person, use left/right for lanes and down/up to lift/lower the nose. Arrow keys follow the same mapping. The gauge icon controls throttle, the disc icon controls the brake, and the bolt is turbo.
 
 Time Trial saves your best run as a ghost when browser storage is available. Rival Race and Time Trial offer 3, 5 or 7 laps, with individual splits and the fastest lap in the results. Track Builder supports closed circuit and point-to-point layouts. The Track Builder supports JSON import and export, so custom courses can be moved between browsers and played offline.
 

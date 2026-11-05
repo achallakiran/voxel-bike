@@ -3,10 +3,11 @@ import {pieceSpec} from './tracks';
 import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
-type Screen = 'home'|'select'|'settings'|'builder'|'race'|'pause'|'results'|'rotate'|'error';
+type Screen = 'intro'|'home'|'select'|'settings'|'builder'|'race'|'pause'|'results'|'rotate'|'error';
 type Action = 'up'|'down'|'back'|'forward'|'gas'|'brake'|'turbo';
-const screens: Screen[]=['home','select','settings','builder','race','pause','results','rotate','error'];
+const screens: Screen[]=['intro','home','select','settings','builder','race','pause','results','rotate','error'];
 const keys: Record<string, Action> = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'back',ArrowRight:'forward',KeyZ:'gas',Space:'brake',KeyX:'turbo'};
+const rearKeys: Record<string,Action> = {ArrowUp:'forward',ArrowDown:'back',ArrowLeft:'up',ArrowRight:'down'};
 const prefix='voxel-bikes:v1:';
 function load<T>(key:string, fallback:T):T {
   try { return JSON.parse(localStorage.getItem(prefix+key) ?? 'null') ?? fallback; }
@@ -105,7 +106,7 @@ function validDraft(value:unknown):value is Draft {
 let draft=load('draft',defaultDraft);
 if(!validDraft(draft))draft=defaultDraft;
 let selected=-1;
-let screen:Screen='home', mode:Mode='trial', race:Race|undefined;
+let screen:Screen='intro', mode:Mode='trial', race:Race|undefined;
 let course:Course=COURSES[0];
 const held=new Map<string,Action>();
 const stick=el('joystick'), stickThumb=el('stickThumb');
@@ -117,6 +118,8 @@ const portrait=matchMedia('(orientation: portrait)');
 const sound=new Sound();
 const settings=load<{sound:boolean;quality:boolean;camera?:number}>('settings',{sound:true,quality:true});
 let cameraIndex:CameraIndex=0;
+let rotationReturn:Screen='intro';
+const forwardView=()=>cameraIndex===2||cameraIndex===4;
 const lapSetting=el<HTMLSelectElement>('lapSetting');
 const savedLaps=load('raceLaps',3);
 let raceLaps=[3,5,7].includes(savedLaps)?savedLaps:3;
@@ -147,13 +150,46 @@ function clearInput(){
   readInput();
 }
 function show(next:Screen){
-  screen=next;clearInput();
+  if(next!=='rotate'&&next!=='error'&&coarse.matches&&portrait.matches){
+    rotationReturn=next;
+    next='rotate';
+  }
+  screen=next;
+  el('rotateExit').hidden=!race;clearInput();
   for(const name of screens)el(name).hidden=name!==next;
+  if(next==='intro')startStudioCard();
   const current=el(next);
-  if(next!=='race')current.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus({preventScroll:true});
+  if(next!=='race'&&next!=='intro')current.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus({preventScroll:true});
   else if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
   sound.update(next==='race'?race:undefined);
 }
+let studioTimer:number|undefined;
+let studioStarted=false;
+function startStudioCard(){
+  if(studioStarted)return;
+  studioStarted=true;
+  const first='> ADA STUDIOS',second='  PRESENTS';
+  const firstLine=el('studioFirst'),secondLine=el('studioSecond'),cursor=el('studioCursor');
+  let count=0;
+  const type=()=>{
+    count++;
+    firstLine.textContent=first.slice(0,count);
+    if(count>first.length+3){
+      secondLine.textContent=second.slice(0,count-first.length-3);
+      secondLine.after(cursor);
+    }
+    if(count>=first.length+3+second.length)window.clearInterval(studioTimer);
+  };
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){
+    count=first.length+3+second.length-1;
+    type();
+  }else studioTimer=window.setInterval(type,85);
+}
+button('studioContinue',()=>{
+  if(screen!=='intro')return;
+  window.clearInterval(studioTimer);
+  home();
+});
 function home(){
   race=undefined;
   show('home');
@@ -204,7 +240,7 @@ function start(c:Course){
   el('resultExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
   countdown='';lastSignal='';accumulator=0;
   hud(race);
-  show('race');orientation();
+  show('race');
 }
 function endRace(finished:Race){
   el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':mode==='trial'?'Time Trial':'Test Ride');
@@ -259,9 +295,6 @@ function hud(r:Race){
     if(countdown)sound.beep(countdown==='GO!'?760:410);
   }
   const cue=r.feedbackTime>0?r.feedback:null;
-  const feedback=el('feedback');
-  feedback.hidden=!cue||!!message;feedback.textContent=cue??'';
-  feedback.classList.toggle('danger',cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out'||cue==='Contact'||cue==='Bump crash'||cue==='Dirt trap crash');
   if(cue&&cue!==lastSignal){
     if(cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out'||cue==='Bump crash'||cue==='Dirt trap crash')sound.beep(130,0.28);
     else if(cue==='Rough landing'||cue==='Bump')sound.beep(106,0.10);
@@ -277,8 +310,9 @@ function exitRace(){
   }else home();
 }
 function orientation(){
-  if(screen==='race'&&coarse.matches&&portrait.matches)show('rotate');
-  else if(screen==='rotate'&&(!coarse.matches||!portrait.matches))show('race');
+  if(screen==='rotate'){
+    if(!coarse.matches||!portrait.matches)show(rotationReturn);
+  }else if(screen!=='error'&&coarse.matches&&portrait.matches)show(screen);
 }
 portrait.addEventListener('change',orientation);coarse.addEventListener('change',orientation);
 function readInput(){
@@ -301,11 +335,12 @@ function steerStick(e:PointerEvent){
   const length=Math.hypot(x,y), scale=Math.max(1,length);
   stickThumb.style.transform='translate('+x*radius/scale+'px,'+y*radius/scale+'px)';
   if(length<0.12){stickAxis=null;stickPitch=0;stickLane=0;readInput();return;}
-  const ax=Math.abs(x),ay=Math.abs(y), bias=0.10;
+  const pitch=forwardView()?y:-x, lateral=forwardView()?x:y;
+  const ax=Math.abs(pitch),ay=Math.abs(lateral), bias=0.10;
   if(!stickAxis||ax>ay+bias)stickAxis=ax>=ay?'pitch':'lane';
   else if(ay>ax+bias)stickAxis='lane';
-  stickPitch=stickAxis==='pitch'?-Math.sign(x)*Math.sqrt(clamp((ax-0.10)/0.78,0,1)):0;
-  const lane=stickAxis==='lane'&&ay>0.23?Math.sign(y):0;
+  stickPitch=stickAxis==='pitch'?Math.sign(pitch)*Math.sqrt(clamp((ax-0.10)/0.78,0,1)):0;
+  const lane=stickAxis==='lane'&&ay>0.23?Math.sign(lateral):0;
   if(lane!==stickLane&&lane){race?.moveLane(lane);laneRepeat=performance.now()+220;}
   stickLane=lane;
   readInput();
@@ -338,10 +373,15 @@ function press(id:string,action:Action){
   readInput();
 }
 window.addEventListener('keydown',e=>{
+  if(screen==='intro'&&(e.code==='Enter'||e.code==='Space')){
+    e.preventDefault();
+    if(!e.repeat)el('studioContinue').click();
+    return;
+  }
   if(e.code==='Escape'){
     if(screen==='race')show('pause');
-    else if(screen==='pause'){show('race');orientation();}
-    else if(screen==='rotate')exitRace();
+    else if(screen==='pause'){show('race');}
+    else if(screen==='rotate'&&race)exitRace();
     return;
   }
   if(e.code==='KeyC'&&screen==='race'){
@@ -349,7 +389,7 @@ window.addEventListener('keydown',e=>{
     if(!e.repeat)nextCamera();
     return;
   }
-  const action=keys[e.code];
+  const action=(forwardView()?rearKeys[e.code]:undefined)??keys[e.code];
   if(!action||screen!=='race')return;
   e.preventDefault();
   if(!e.repeat)press(e.code,action);
@@ -454,16 +494,23 @@ button('offline',()=>{
 if(location.protocol==='file:')el('offline').hidden=true;
 button('cameraButton',nextCamera);
 button('pauseButton',()=>show('pause'));
-button('resume',()=>{sound.unlock();show('race');orientation();});
+button('resume',()=>{sound.unlock();show('race');});
 button('restart',()=>start(course));button('retry',()=>start(course));
 button('pauseExit',exitRace);button('resultExit',exitRace);button('rotateExit',exitRace);
 button('reload',()=>location.reload());
 const soundToggle=el<HTMLInputElement>('sound'), qualityToggle=el<HTMLInputElement>('quality');
 const cameraSetting=el<HTMLSelectElement>('cameraSetting');
 function setCamera(index:number){
+  clearInput();
   cameraIndex=(Number.isInteger(index)&&index>=0&&index<CAMERA_NAMES.length?index:0) as CameraIndex;
   cameraSetting.value=String(cameraIndex);
   el('cameraButton').setAttribute('aria-label','Change camera · '+CAMERA_NAMES[cameraIndex]);
+  el('touchHelp').textContent=(forwardView()
+    ? 'Move left or right to change lanes. Pull down to lift the nose or push up to lower it.'
+    : 'Move up or down to change lanes. Pull left to lift the nose or push right to lower it.')
+    +' The gauge is throttle, the disc is brake, and the bolt is turbo.';
+  el('laneKeys').textContent=forwardView()?'← / →':'↑ / ↓';
+  el('pitchKeys').textContent=forwardView()?'↓ / ↑':'← / →';
   if(view)view.cameraIndex=cameraIndex;
 }
 function nextCamera(){setCamera((cameraIndex+1)%CAMERA_NAMES.length);syncSettings();}
@@ -488,7 +535,7 @@ function loop(now:number){
     sound.update(race);
     if(race.done)endRace(race);
   }
-  if(screen!=='error')view?.frame(dt,race,race?.done?1:clamp(accumulator/DT,0,1));
+  if(screen!=='error'&&screen!=='intro'&&!(screen==='rotate'&&rotationReturn==='intro'))view?.frame(dt,race,race?.done?1:clamp(accumulator/DT,0,1));
   requestAnimationFrame(loop);
 }
 try{
@@ -504,5 +551,6 @@ try{
     el('errorMessage').textContent='The graphics context was interrupted. Reload to return to the starting gate.';
     show('error');
   });
+  show('intro');
   requestAnimationFrame(loop);
 }catch(error){console.error(error);show('error');}

@@ -1,6 +1,6 @@
 import * as T from 'three';
 import {RiderVisibility} from './visibility';
-import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, CrashKind } from './race';
+import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, RECORDED_CRASH_TIME, CrashKind } from './race';
 const PALETTES = [
   { sky:0x79c1c6, fog:0x9fcbd0, dirt:0xb97449, soil:0x875139, grass:0x646f47, rock:0xa78b65, far:0x749995, trim:0xf3ddd2, sun:0xffdd9d },
   { sky:0x9eaac8, fog:0xb0a9c1, dirt:0x9d704e, soil:0x63525b, grass:0x6d6578, rock:0x8a7886, far:0x7b7e9c, trim:0xebc8b9, sun:0xffba83 },
@@ -28,8 +28,11 @@ function bar(parent:T.Object3D, color:number, ax:number,ay:number,bx:number,by:n
   const m = box(parent,color,(ax+bx)/2,(ay+by)/2,z,Math.hypot(bx-ax,by-ay),thick,depth,ghost);
   m.rotation.z = Math.atan2(by-ay,bx-ax); return m;
 }
+interface RiderLimbs {
+  thigh:T.Mesh; shin:T.Mesh; boot:T.Mesh; upperArm:T.Mesh; forearm:T.Mesh;
+}
 interface RiderView {
-  root:T.Group; body:T.Group; person:T.Group; wheels:T.Group[]; shadow:T.Mesh<T.CircleGeometry,T.MeshBasicMaterial>; fork:T.Mesh;
+  root:T.Group; body:T.Group; person:T.Group; wheels:T.Group[]; limbs:RiderLimbs[]; shadow:T.Mesh<T.CircleGeometry,T.MeshBasicMaterial>; fork:T.Mesh;
 }
 function makeRider(scene:T.Scene,color:number,ghost=false):RiderView {
   const root=new T.Group(),body=new T.Group(),person=new T.Group();
@@ -48,13 +51,13 @@ function makeRider(scene:T.Scene,color:number,ghost=false):RiderView {
   bar(body,silver,-0.94,-0.2,0.14,-0.11,0.18,0.12,0.12,ghost);
   const fork=bar(body,silver,0.89,-0.23,0.50,0.65,0,0.14,0.47,ghost);
   b(ink,0.49,0.69,0,0.16,0.13,0.94);
-  for (const z of [-0.33,0.33]) {
-    bar(person,ink,-0.38,0.70,0.13,0.46,z,0.25,0.23,ghost);
-    bar(person,ink,0.13,0.46,-0.17,0.12,z,0.23,0.23,ghost);
-    p(ink,-0.04,0.09,z,0.32,0.19,0.27);
-    bar(person,color,-0.11,1.19,0.14,0.91,z,0.20,0.22,ghost);
-    bar(person,white,0.14,0.91,0.51,0.72,z,0.16,0.20,ghost);
-  }
+  const limbs=[-0.33,0.33].map(z=>({
+    thigh:bar(person,ink,-0.38,0.70,0.13,0.46,z,0.25,0.23,ghost),
+    shin:bar(person,ink,0.13,0.46,-0.17,0.12,z,0.23,0.23,ghost),
+    boot:p(ink,-0.04,0.09,z,0.32,0.19,0.27),
+    upperArm:bar(person,color,-0.11,1.19,0.14,0.91,z,0.20,0.22,ghost),
+    forearm:bar(person,white,0.14,0.91,0.51,0.72,z,0.16,0.20,ghost),
+  }));
   p(color,-0.27,0.93,0,0.54,0.59,0.54).rotation.z=-0.38;
   p(white,-0.35,1.11,0,0.34,0.18,0.58).rotation.z=-0.38;
   p(color,0.03,1.46,0,0.56,0.52,0.55);
@@ -84,7 +87,7 @@ function makeRider(scene:T.Scene,color:number,ghost=false):RiderView {
   });
   const shadow=new T.Mesh(circle,new T.MeshBasicMaterial({color:0x231b25,transparent:true,opacity:ghost?0:0.24,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2}));
   shadow.scale.set(1.44,1,0.58); scene.add(shadow);
-  return {root,body,person,wheels,shadow,fork};
+  return {root,body,person,wheels,limbs,shadow,fork};
 }
 type Block = [number,number,number,number,number,number,number];
 const decorationMaterial = new T.MeshStandardMaterial({roughness:0.92});
@@ -132,43 +135,80 @@ function clearance(track:Track,bike:Bike,parts:T.Object3D[]){
   }
   return lift;
 }
+function limbSegment(part:T.Mesh,ax:number,ay:number,bx:number,by:number){
+  part.position.x=(ax+bx)/2;
+  part.position.y=(ay+by)/2;
+  part.rotation.z=Math.atan2(by-ay,bx-ax);
+  part.scale.x=Math.hypot(bx-ax,by-ay);
+}
+function poseLegsAndArms(view:RiderView,standing:number,stride=0,phase=0){
+  view.limbs.forEach(({thigh,shin,boot,upperArm,forearm},i)=>{
+    const cycle=phase+i*Math.PI;
+    const reach=Math.sin(cycle)*stride,step=Math.max(0,Math.cos(cycle))*stride;
+    const kneeX=blend(0.13,-0.23+reach*0.19,standing), kneeY=blend(0.46,0.36+step*0.10,standing);
+    const footX=blend(-0.17,-0.37+reach*0.40,standing), footY=blend(0.12,-0.02+step*0.28,standing);
+    const elbowX=blend(0.14,-0.28-reach*0.25,standing), elbowY=blend(0.91,0.88,standing);
+    limbSegment(thigh,-0.38,0.70,kneeX,kneeY);
+    limbSegment(shin,kneeX,kneeY,footX,footY);
+    boot.position.x=footX+0.13;
+    boot.position.y=footY-0.03;
+    limbSegment(upperArm,-0.11,1.19,elbowX,elbowY);
+    limbSegment(forearm,elbowX,elbowY,blend(0.51,-0.02-reach*0.30,standing),blend(0.72,0.83+Math.abs(reach)*0.14,standing));
+  });
+}
+const crashOffset=new T.Vector3(), crashPose=new T.Quaternion(), bodyInverse=new T.Quaternion();
+const crashAngles=new T.Euler(0,0,0,'YXZ');
 function animateCrash(view:RiderView,track:Track,bike:Bike,ground:number){
   const age=CRASH_TIME-bike.crash;
-  const tumble=clamp(age/0.70,0,1);
-  const settle=T.MathUtils.smoothstep(age,0.86,CRASH_TIME);
+  const ease=(start:number,end:number)=>T.MathUtils.smoothstep(age,start,end);
+  const tumble=clamp(age/0.86,0,1);
+  const separate=ease(0,0.18);
   const back=bike.crashKind===CrashKind.Back, side=bike.crashKind===CrashKind.Side;
   const direction=back?-1:1;
-  const roll=T.MathUtils.smoothstep(age,0,0.47);
-  const arc=Math.sin(tumble*Math.PI);
-  view.root.position.y=ground+blend(0.72+arc*0.17,0.72,settle);
-  const upright=-Math.atan(track.bank(track.pose(bike.x).curvature));
-  view.body.rotation.x=upright+blend((side?bike.side:-0.64)*roll*1.46,0,settle);
-  view.body.rotation.z=blend(bike.pitch+(side?0.12:-direction*1.45)*roll,track.slope(bike.x,bike.z),settle);
+  const fall=ease(0,0.48), rightBike=ease(2.49,2.77), mount=ease(2.64,CRASH_TIME);
+  const bank=-Math.atan(track.bank(track.pose(bike.x).curvature));
+  const slope=track.slope(bike.x,bike.z);
+  view.root.position.y=blend(bike.y,ground+0.72,ease(0,0.32));
+  view.body.rotation.x=bank+bike.side*1.42*fall*(1-rightBike);
+  view.body.rotation.z=blend(bike.pitch+(side?0.14:-direction*1.20)*fall,slope,ease(0.18,0.74));
   view.root.updateMatrixWorld(true);
   const bikeParts=view.body.children.filter(p=>p!==view.person);
   for(const wheel of view.wheels)bikeParts.push(wheel.children[0]);
-  view.root.position.y+=clearance(track,bike,bikeParts)*(1-settle);
+  view.root.position.y+=clearance(track,bike,bikeParts)*(1-rightBike);
   view.root.updateMatrixWorld(true);
-  const travel=1-Math.exp(-5.7*age);
-  const riderX=(side?0.65:direction*2.4)*travel;
-  const riderZ=(side?bike.side*1.4:bike.side*0.67)*travel;
-  const arcY=arc*(back?0.66:0.81);
-  const relative=new T.Vector3(riderX,-0.17*travel+arcY,riderZ);
-  relative.applyQuaternion(view.body.quaternion.clone().invert()).multiplyScalar(1-settle);
-  relative.y+=0.31*Math.sin(settle*Math.PI);
-  view.person.position.copy(relative);
-  const riderAngle=side?0.41:-direction*2.7*tumble;
-  const pose=new T.Quaternion().setFromEuler(new T.Euler((side?bike.side:-0.63)*1.36*tumble,0,riderAngle));
-  const detached=view.body.quaternion.clone().invert().multiply(pose);
-  view.person.quaternion.copy(neutral).slerp(detached,T.MathUtils.smoothstep(age,0,0.13)*(1-settle));
+
+  // Roll to a stop, push up, run back to the bike, then swing onto the seat.
+  const run=clamp((age-1.39)/1.10,0,1);
+  const runTravel=run*run*(3-2*run);
+  const travel=ease(0.04,0.88)*(1-runTravel);
+  const riderX=direction*(side?2.15:3.25);
+  const riderZ=bike.side*(side?1.86:1.26);
+  const standing=ease(1.02,1.39)*(1-mount);
+  const stride=ease(1.39,1.51)*(1-ease(2.31,2.49));
+  const phase=(age-1.39)*Math.PI*8.5;
+  const rollAngle=age<0.86?Math.PI*2.5*ease(0.06,0.86):Math.PI/2*(1-ease(1.02,1.39));
+  const rollArc=Math.sin(tumble*Math.PI)*0.52;
+  const runBob=Math.abs(Math.sin(phase))*stride*0.08;
+  const onGround=blend(0.13,0.03,standing)+rollArc+runBob;
+  const offsetX=riderX*travel,offsetZ=riderZ*travel+bike.side*0.57*(ease(1.38,2.49)-mount);
+  const underRider=track.height(bike.x+offsetX,clamp(bike.z+offsetZ,-WIDTH/2,WIDTH/2));
+  const riderHeight=blend(view.root.position.y,underRider+onGround,separate);
+  crashOffset.set(offsetX,riderHeight-view.root.position.y+Math.sin(mount*Math.PI)*0.52,offsetZ);
+  bodyInverse.copy(view.body.quaternion).invert();
+  view.person.position.copy(crashOffset.multiplyScalar(1-mount).applyQuaternion(bodyInverse));
+  const heading=Math.atan2(riderZ,-riderX)*ease(1.10,1.39)*(1-mount);
+  crashAngles.set(bike.side*0.34*fall*(1-standing),heading,-direction*rollAngle);
+  crashPose.setFromEuler(crashAngles);
+  view.person.quaternion.copy(neutral).slerp(crashPose.premultiply(bodyInverse),separate*(1-mount));
+  poseLegsAndArms(view,standing,stride,phase);
   view.root.updateMatrixWorld(true);
   const lift=clearance(track,bike,view.person.children);
-  worldCorrection.set(0,lift,0).applyQuaternion(view.body.getWorldQuaternion(new T.Quaternion()).invert());
-  view.person.position.add(worldCorrection);
+  worldCorrection.set(0,lift,0).applyQuaternion(view.body.getWorldQuaternion(crashPose).invert());
+  view.person.position.addScaledVector(worldCorrection,1-mount);
 }
 function seeded(seed:number) {return () => {seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};}
-export const CAMERA_NAMES = ['Hero side','Broadcast','Rear chase','Front quarter'] as const;
-export type CameraIndex = 0 | 1 | 2 | 3;
+export const CAMERA_NAMES = ['Hero side','Broadcast','Rear chase','Front quarter','First person'] as const;
+export type CameraIndex = 0 | 1 | 2 | 3 | 4;
 
 class TitleTrack {
   readonly scene=new T.Scene();
@@ -337,6 +377,8 @@ export class View {
   private readonly focus=new T.Vector3();
   private cameraReady=false;
   cameraIndex:CameraIndex=0;
+  private previousCamera:CameraIndex=0;
+  private wasFirstPerson=false;
   reduceMotion=false;
   private renderer: T.WebGLRenderer;
   private world=new T.Group();
@@ -647,8 +689,9 @@ export class View {
       const t=clamp((race.time-a[0])/Math.max(0.001,b[0]-a[0]),0,1);
       bikes.push({...r,x:blend(a[1],b[1],t),y:blend(a[2],b[2],t),z:blend(a[3],b[3],t),
         pitch:blend(a[4],b[4],t),spin:blend(a[5],b[5],t),impact:0,
-        crash:a[7]===b[7]?blend(a[6],b[6],t):a[6],crashKind:a[7],lean:blend(a[8],b[8],t),side:a[9]});
+        crash:(a[7]===b[7]?blend(a[6],b[6],t):a[6])*CRASH_TIME/RECORDED_CRASH_TIME,crashKind:a[7],lean:blend(a[8],b[8],t),side:a[9]});
     }
+    const firstPerson=this.cameraIndex===4&&!r.crash;
     this.riders.forEach((view,i)=>{
       const bike=bikes[i];
       view.root.visible=!!bike;
@@ -664,7 +707,9 @@ export class View {
         Math.sin(this.elapsed*18)*Math.min(0.025,bike.speed/900));
       view.fork.scale.y=0.14-bike.impact*0.026;
       view.wheels.forEach(w=>{w.rotation.z=bike.spin;w.position.y=-0.18+bike.impact*0.08;});
+      view.person.visible=i!==0||!firstPerson;
       if(bike.crash)animateCrash(view,this.track,bike,ground);
+      else poseLegsAndArms(view,0);
       view.shadow.position.set(pose.x,ground+0.040,pose.z);
       view.shadow.rotation.set(-Math.atan(this.track.bank(pose.curvature)),yaw,this.track.slope(bike.x,bike.z),'YXZ');
       (view.shadow.material as T.MeshBasicMaterial).opacity=clamp(0.26-(bike.y-ground-0.72)*0.054,0.06,0.28);
@@ -673,7 +718,7 @@ export class View {
       this.lastDust=this.elapsed;
       for(const bike of bikes.slice(0,n)){
         if(bike.air||(!bike.crash&&bike.speed<4)||this.particles.length>=84)continue;
-        if(bike.crash && bike.crash<0.93)continue;
+        if(bike.crash && CRASH_TIME-bike.crash>0.8)continue;
         const surface=this.track.surface(bike.x,bike.z);
         const mud=surface==='mud'||surface==='trap';
         this.particles.push({x:bike.x-0.92,y:bike.y-0.5,z:bike.z+(Math.random()-0.5)*0.49,life:0.45,size:0.12+Math.random()*0.18,color:mud?0x785847:0xcd9b73});
@@ -718,6 +763,7 @@ export class View {
         this.desiredPosition.set(x-7.8,y+11.0,z+wideDepth);
         this.desiredFocus.set(x+2.1,y+0.7,z-1.4);fov=38;
         break;
+      case 4:
       case 2:
         this.desiredPosition.set(x-13.7,y+4.9,z+1.9);
         this.desiredFocus.set(x+6.6,y+1.0,z-0.2);fov=55;
@@ -738,7 +784,23 @@ export class View {
       const ahead=this.track.pose(this.desiredFocus.x,this.desiredFocus.z);
       this.desiredFocus.x=ahead.x;this.desiredFocus.z=ahead.z;
     }
-    const cameraBlend=this.cameraReady&&!this.reduceMotion?1-Math.exp(-dt*12):1;
+    if(firstPerson){
+      const {body}=this.riders[0];
+      body.updateWorldMatrix(true,false);
+      const slope=this.track.slope(r.x,r.z);
+      const pitch=clamp((r.pitch-slope)*0.53+slope,-0.50,0.65);
+      const road=this.track.pose(r.x,r.z);
+      const look=this.track.pose(r.x+12,r.z);
+      this.desiredPosition.set(-0.50,1.52,0).applyMatrix4(body.matrixWorld);
+      this.desiredFocus.set(blend(this.desiredPosition.x+road.fx*12,look.x,0.42),
+        this.desiredPosition.y+Math.tan(pitch)*12-1.52,
+        blend(this.desiredPosition.z+road.fz*12,look.z,0.42));
+      fov=74;
+    }
+    const sameView=this.previousCamera===this.cameraIndex&&this.wasFirstPerson===firstPerson;
+    const cameraBlend=this.cameraReady&&sameView&&!this.reduceMotion?1-Math.exp(-dt*(firstPerson?22:12)):1;
+    this.previousCamera=this.cameraIndex;
+    this.wasFirstPerson=firstPerson;
     this.camera.position.lerp(this.desiredPosition,cameraBlend);
     this.focus.lerp(this.desiredFocus,cameraBlend);
     this.camera.fov=blend(this.camera.fov,fov,cameraBlend);

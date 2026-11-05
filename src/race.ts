@@ -2,7 +2,9 @@ import {LANES, Track, blend, clamp, type Surface} from './tracks';
 export {COURSES, LANES, PIECES, Track, WIDTH, blend, clamp} from './tracks';
 export type {Course, Piece} from './tracks';
 export const DT=1/120;
-export const CRASH_TIME=1.38;
+export const CRASH_TIME=2.85;
+// Keep crash samples compatible with ghosts recorded before the longer recovery.
+export const RECORDED_CRASH_TIME=1.38;
 export interface Controls { gas: boolean; brake: boolean; turbo: boolean; pitch: number }
 export type Mode = 'trial' | 'rival' | 'test';
 export type Feedback = 'Clean landing' | 'Rough landing' | 'Wipeout' | 'Loop-out' | 'Overheated' | 'Cooling' | 'Contact' | 'Bump' | 'Bump crash' | 'Dirt trap crash' | `Lap ${number}`;
@@ -103,8 +105,8 @@ export class Race {
     if(this.gateTime===null&&this.rider.x>=0){
       this.gateTime=this.lastGateTime=crossedAt(0);
     }
-    if(this.gateTime!==null&&this.rider.x>=marker){
-      const crossing=crossedAt(marker);
+    if(this.gateTime!==null&&this.rider.x>=marker&&(this.splits.length+1<this.track.laps||!this.rider.crash)){
+      const crossing=oldX>=marker?this.time:crossedAt(marker);
       this.splits.push(crossing-this.lastGateTime);
       this.lastGateTime=crossing;
       this.react('cheer',marker);
@@ -112,7 +114,7 @@ export class Race {
     }
     if(this.tick++%6===0&&this.mode==='trial'){
       const {x,y,z,pitch,spin,crash,crashKind,lean,side}=this.rider;
-      this.record.push([this.time,x,y,z,pitch,spin,crash,crashKind,lean,side].map(n=>+n.toFixed(3)) as Frame);
+      this.record.push([this.time,x,y,z,pitch,spin,crash*RECORDED_CRASH_TIME/CRASH_TIME,crashKind,lean,side].map(n=>+n.toFixed(3)) as Frame);
     }
     if(this.rider.finish)this.done=true;
   }
@@ -248,6 +250,6 @@ export class Race {
         }
       }
     }
-    if(b.x>=this.track.end)b.finish=this.time-dt*clamp((b.x-this.track.end)/Math.max(0.01,b.x-oldX),0,1);
+    if(b.x>=this.track.end&&!b.crash)b.finish=oldX>=this.track.end?this.time:this.time-dt*clamp((b.x-this.track.end)/Math.max(0.01,b.x-oldX),0,1);
   }
 }
