@@ -1,3 +1,4 @@
+import {playStudioLogo} from './studio-logo';
 import {COURSES, PIECES, DT, Track, Race, clamp, type Course, type Piece, type Mode, type RecordRun} from './race';
 import {conditionKey, DEFAULT_CONDITIONS, type Conditions} from './conditions';
 import {pieceSpec} from './tracks';
@@ -229,10 +230,12 @@ function startStudioCard(){
     type();
   }else studioTimer=window.setInterval(type,85);
 }
+const studioContinue=el<HTMLButtonElement>('studioContinue');
 button('studioContinue',()=>{
-  if(screen!=='intro')return;
+  if(screen!=='intro'||studioContinue.hidden)return;
   window.clearInterval(studioTimer);
-  home();
+  studioContinue.hidden=true;
+  void playStudioLogo(el('intro'),home);
 });
 function home(){
   race=undefined;
