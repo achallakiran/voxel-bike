@@ -3,9 +3,9 @@ export {COURSES, LANES, PIECES, Track, WIDTH, blend, clamp} from './tracks';
 export type {Course, Piece} from './tracks';
 export const DT=1/120;
 export const CRASH_TIME=1.38;
-export interface Controls { gas: boolean; turbo: boolean; pitch: number }
+export interface Controls { gas: boolean; brake: boolean; turbo: boolean; pitch: number }
 export type Mode = 'trial' | 'rival' | 'test';
-export type Feedback = 'Clean landing' | 'Rough landing' | 'Wipeout' | 'Loop-out' | 'Overheated' | 'Cooling' | 'Contact' | 'Bump' | 'Bump crash' | 'Dirt trap crash' | 'Lap 2';
+export type Feedback = 'Clean landing' | 'Rough landing' | 'Wipeout' | 'Loop-out' | 'Overheated' | 'Cooling' | 'Contact' | 'Bump' | 'Bump crash' | 'Dirt trap crash' | `Lap ${number}`;
 export enum CrashKind { None, Back, Front, Side }
 export interface Bike {
   x: number; y: number; z: number; vy: number; speed: number; lane: number; pitch: number;
@@ -32,12 +32,16 @@ export class Race {
   feedbackTime = 0;
   record: Frame[] = [];
   splits: number[] = [];
+  private gateTime:number|null;
+  private lastGateTime=0;
+  get elapsed(){return this.gateTime===null?0:Math.max(0,(this.rider.finish||this.time)-this.gateTime);}
   done = false;
   crowd:{kind:'cheer'|'gasp'; x:number; serial:number}|undefined;
   private crowdSerial=0;
-  readonly inputs = {gas:false, turbo:false, pitch:0};
+  readonly inputs = {gas:false, brake:false, turbo:false, pitch:0};
   constructor(readonly track: Track, readonly mode: Mode, readonly ghost: RecordRun | undefined) {
     this.startX=track.circuit?-6:5;
+    this.gateTime=track.circuit?null:0;
     this.rider = newBike(this.startX,2);
     this.rivals = mode==='rival' ? [newBike(this.startX+1.7,0),newBike(this.startX+0.6,1),newBike(this.startX+1.5,3)] : [];
     const field=[this.rider,...this.rivals];
@@ -52,7 +56,7 @@ export class Race {
   }
   private signal(event:Feedback) {
     this.feedback=event;
-    this.feedbackTime=event==='Overheated'?2.3:event==='Lap 2'?1.3:0.8;
+    this.feedbackTime=event==='Overheated'?2.3:event.startsWith('Lap ')?1.3:0.8;
   }
   private react(kind:'cheer'|'gasp',x:number){
     this.crowd={kind,x,serial:++this.crowdSerial};
@@ -95,11 +99,16 @@ export class Race {
     for(const [i,bike] of this.rivals.entries())this.drive(bike,this.rivalInput(bike,i),dt,false);
     for(let i=0;i<field.length;i++)for(let j=i+1;j<field.length;j++)this.contact(field[i],field[j]);
     const marker=this.track.markers[this.splits.length];
-    if(this.rider.x>=marker){
-      const split=this.time-dt*clamp((this.rider.x-marker)/Math.max(0.01,this.rider.x-oldX),0,1);
-      this.splits.push(split);
+    const crossedAt=(x:number)=>this.time-dt*clamp((this.rider.x-x)/Math.max(0.01,this.rider.x-oldX),0,1);
+    if(this.gateTime===null&&this.rider.x>=0){
+      this.gateTime=this.lastGateTime=crossedAt(0);
+    }
+    if(this.gateTime!==null&&this.rider.x>=marker){
+      const crossing=crossedAt(marker);
+      this.splits.push(crossing-this.lastGateTime);
+      this.lastGateTime=crossing;
       this.react('cheer',marker);
-      if(this.splits.length<this.track.laps)this.signal('Lap 2');
+      if(this.splits.length<this.track.laps)this.signal(`Lap ${this.lap}`);
     }
     if(this.tick++%6===0&&this.mode==='trial'){
       const {x,y,z,pitch,spin,crash,crashKind,lean,side}=this.rider;
@@ -125,7 +134,7 @@ export class Race {
     }
     const target=this.track.slope(b.x+Math.max(1,b.speed*0.15),b.z);
     const cornerAhead=Math.abs(this.track.pose(look+6).curvature);
-    return {gas:true,turbo:!b.hot&&b.heat<74&&!rough(current)&&cornerAhead<0.035&&Math.sin(this.time*(1.48+i*0.16)+i*3)>0.30,
+    return {gas:true,brake:false,turbo:!b.hot&&b.heat<74&&!rough(current)&&cornerAhead<0.035&&Math.sin(this.time*(1.48+i*0.16)+i*3)>0.30,
       pitch:b.air?clamp((target-b.pitch)*4.8,-1,1):
         [2,4,6,8].some(d=>this.track.surface(b.x+d,b.z)==='bump')?0.88:0};
   }
@@ -158,16 +167,16 @@ export class Race {
     }else{
       const ground=b.air?'dirt':this.track.surface(b.x,b.z);
       const cooling=ground==='cool', muddy=rough(ground);
-      const turbo=input.turbo&&!b.hot;
+      const turbo=input.turbo&&!input.brake&&!b.hot;
       this.updateHeat(b,turbo,cooling,dt,player);
       const grip=[23,16,13,18,15][this.track.course.theme]*(muddy?0.62:1);
       const turnLimit=Math.sqrt(grip*laneRatio/Math.max(0.001,Math.abs(curve)));
       const surfaceLimit=(turbo?32:23)*(ground==='mud'?0.61:ground==='rough'?0.69:ground==='trap'?0.66:1);
       const limit=Math.min(surfaceLimit,turnLimit);
       if(!b.air){
-        const force=b.hot?-34:b.speed>limit?(muddy?-28:-12):(input.gas||input.turbo)?(turbo?19:13.8):-8.5;
+        const force=input.brake?-44:b.hot?-34:b.speed>limit?(muddy?-28:-12):(input.gas||input.turbo)?(turbo?19:13.8):-8.5;
         b.speed=clamp(b.speed+force*dt,0,33);
-      }
+      }else if(input.brake)b.speed=Math.max(0,b.speed-4.5*dt);
       const oldZ=b.z, lateralRate=b.air?1.65:muddy?5.6:10.4;
       const steer=LANES[b.lane]-b.z;
       b.lean=blend(b.lean,clamp(steer*0.49-curve*b.speed*0.43,-0.43,0.43),Math.min(1,dt*13));
@@ -175,20 +184,23 @@ export class Race {
       b.x+=b.speed*dt/laneRatio;b.spin-=b.speed*dt/0.54;
       const angle=this.track.slope(b.x,b.z);
       if(!b.air){
-        const lift=b.speed>5.5&&input.pitch>0.12;
+        const lift=b.speed>2.8&&input.pitch>0.10&&!input.brake;
         if(lift){
-          const velocity=(input.pitch*1.64-0.33)*(turbo?1.16:1);
-          b.wheelie=clamp(b.wheelie+velocity*dt,0,1.25);
-        }else b.wheelie=Math.max(0,b.wheelie-(input.pitch<0?3.7:2.8)*dt);
-        b.pitch=blend(b.pitch,angle+b.wheelie,Math.min(1,dt*24));
-        const wheel=Math.cos(b.pitch)*0.89;
-        const rearY=this.track.height(b.x-wheel,b.z)+0.54+Math.sin(b.pitch)*0.89+Math.cos(b.pitch)*0.18;
-        const frontY=this.track.height(b.x+wheel,b.z)+0.54-Math.sin(b.pitch)*0.89+Math.cos(b.pitch)*0.18;
+          const rise=b.wheelie<0.30?2.90:1.54;
+          b.wheelie=Math.min(1.25,b.wheelie+(0.32+input.pitch*rise)*(turbo?1.10:1)*dt);
+        }else b.wheelie=Math.max(0,b.wheelie-(input.pitch<0||input.brake?4.8:3.6)*dt);
+        b.pitch=blend(b.pitch,angle+b.wheelie,1-Math.exp(-dt*33));
+        const sine=Math.sin(b.pitch), cosine=Math.cos(b.pitch);
+        const frontX=b.x+cosine*0.89+sine*0.18,rearX=b.x-cosine*0.89+sine*0.18;
+        const rearY=this.track.height(rearX,b.z)+0.54+sine*0.89+cosine*0.18;
+        const frontY=this.track.height(frontX,b.z)+0.54-sine*0.89+cosine*0.18;
         b.y=Math.max(rearY,frontY);
-        const frontSurface=this.track.surface(b.x+wheel,b.z);
+        const frontSurface=this.track.surface(frontX,b.z);
         const bump=frontSurface==='bump';
+        const barrierTop=this.track.height(frontX+0.45,b.z);
+        const frontBottom=rearY+sine*0.89-cosine*0.18-0.54;
         if(frontSurface!==b.hazard){
-          if(bump&&b.wheelie<0.20){
+          if(bump&&frontBottom<barrierTop+0.035){
             if(b.speed>=21.5){
               this.fall(b,CrashKind.Front,player);
               if(player)this.signal('Bump crash');

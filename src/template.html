@@ -14,10 +14,10 @@
 <main id="ui">
   <section id="home" class="screen home">
     <div class="title-plate">
-      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 04</div>
+      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 05</div>
       <h1>VOXEL<span>BIKES</span></h1>
     </div>
-    <div class="race-number" aria-hidden="true">04</div>
+    <div class="race-number" aria-hidden="true">05</div>
     <nav class="pit-board" aria-label="Main menu">
       <button data-mode="trial" class="pit-button"><span>01</span> Time Trial</button>
       <button data-mode="rival" class="pit-button"><span>02</span> Rival Race</button>
@@ -32,6 +32,7 @@
   <section id="select" class="screen overlay" hidden>
     <div class="panel select-panel">
       <div class="eyebrow">Redline Series / Course Select</div><h2 id="modeTitle">Time Trial</h2>
+      <label class="lap-setting">Laps <select id="lapSetting"><option value="3">3</option><option value="5">5</option><option value="7">7</option></select></label>
       <div id="courses" class="cards"></div>
       <button class="text-button" data-home>← Main menu</button>
     </div>
@@ -43,8 +44,8 @@
       <label class="setting">Engine &amp; race audio <input type="checkbox" id="sound" checked></label>
       <label class="setting">High-resolution rendering <input type="checkbox" id="quality" checked></label>
       <label class="setting">Race camera <select id="cameraSetting"><option value="0">Hero side</option><option value="1">Broadcast</option><option value="2">Rear chase</option><option value="3">Front quarter</option></select></label>
-      <p class="touch-help">Touch stick ↑ ↓ changes lanes. Pull left to lift the nose, right to lower it. The gauge is throttle and the bolt is turbo.</p>
-      <dl class="keylist"><div><dt>Lane</dt><dd>↑ / ↓</dd></div><div><dt>Pitch</dt><dd>← / →</dd></div><div><dt>Throttle</dt><dd>Z</dd></div><div><dt>Turbo</dt><dd>X</dd></div><div><dt>Camera</dt><dd>C</dd></div><div><dt>Pause</dt><dd>Esc</dd></div></dl>
+      <p class="touch-help">Touch stick ↑ ↓ changes lanes. Pull left to lift the nose, right to lower it. The gauge is throttle, the disc is brake, and the bolt is turbo.</p>
+      <dl class="keylist"><div><dt>Lane</dt><dd>↑ / ↓</dd></div><div><dt>Pitch</dt><dd>← / →</dd></div><div><dt>Throttle</dt><dd>Z</dd></div><div><dt>Brake</dt><dd>Space</dd></div><div><dt>Turbo</dt><dd>X</dd></div><div><dt>Camera</dt><dd>C</dd></div><div><dt>Pause</dt><dd>Esc</dd></div></dl>
       <button class="text-button" data-home>← Main menu</button>
     </div>
   </section>
@@ -91,6 +92,7 @@
       </div>
       <div class="pedals">
         <button class="gas" data-action="gas" aria-label="Throttle"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 22a11 11 0 1 1 20 0M16 17l6-7M8 17h2m12 0h2M16 8v2"/><circle cx="16" cy="17" r="2"/></svg></button>
+        <button class="brake" data-action="brake" aria-label="Brake"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="7"/><path d="M7 6a13 13 0 0 0 0 20M25 6a13 13 0 0 1 0 20M16 13v6"/></svg></button>
         <button class="turbo" data-action="turbo" aria-label="Turbo"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M17 3 7 18h8l-1 11 11-16h-9z"/></svg></button>
       </div>
     </div>
@@ -104,7 +106,7 @@
   <section id="results" class="screen overlay" hidden>
     <div class="panel compact">
       <div class="eyebrow" id="resultCourse"></div><h2 id="resultTitle">Finish</h2>
-      <div id="resultTime" class="result-time"></div><div id="resultDetail" class="result-detail"></div>
+      <div id="resultTime" class="result-time"></div><div id="resultDetail" class="result-detail"></div><ol id="lapResults" class="lap-results" aria-label="Lap times, star marks fastest"></ol>
       <div class="stack"><button id="retry" class="solid">Race again ↗</button><button id="resultExit" class="text-button">← Main menu</button></div>
     </div>
   </section>

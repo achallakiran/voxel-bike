@@ -1,4 +1,5 @@
 import * as T from 'three';
+import {RiderVisibility} from './visibility';
 import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, CrashKind } from './race';
 const PALETTES = [
   { sky:0x79c1c6, fog:0x9fcbd0, dirt:0xb97449, soil:0x875139, grass:0x646f47, rock:0xa78b65, far:0x749995, trim:0xf3ddd2, sun:0xffdd9d },
@@ -98,11 +99,72 @@ function batch(scene:T.Object3D,blocks:Block[],track?:Track) {
     obj.scale.set(w,h,d);obj.updateMatrix();
     mesh.setMatrixAt(i,obj.matrix);mesh.setColorAt(i,color.setHex(c));
   });
-  mesh.computeBoundingSphere(); scene.add(mesh);
+  mesh.computeBoundingSphere(); scene.add(mesh);return mesh;
 }
 const neutral=new T.Quaternion();
-function trackHeightOffset(track:Track,bike:Bike,dx:number,dz:number) {
-  return track.height(bike.x+dx,clamp(bike.z+dz,-4.6,4.6))-track.height(bike.x,bike.z);
+const contactPoint=new T.Vector3(), worldCorrection=new T.Vector3();
+function crashGround(track:Track,bike:Bike,point:T.Vector3){
+  let distance=bike.x;
+  for(let i=0;i<3;i++){
+    const p=track.pose(distance);
+    distance=clamp(distance+(point.x-p.x)*p.fx+(point.z-p.z)*p.fz,bike.x-5,bike.x+5);
+  }
+  const p=track.pose(distance);
+  const lane=clamp(-(point.x-p.x)*p.fz+(point.z-p.z)*p.fx,-WIDTH/2,WIDTH/2);
+  return track.height(distance,lane);
+}
+function clearance(track:Track,bike:Bike,parts:T.Object3D[]){
+  let lift=0;
+  for(const part of parts){
+    if(!(part instanceof T.Mesh))continue;
+    if(part.geometry===tyre){
+      for(let i=0;i<12;i++)for(const side of [-0.165,0.165]){
+        const angle=i*Math.PI/6;
+        contactPoint.set(Math.cos(angle)*0.54,Math.sin(angle)*0.54,side).applyMatrix4(part.matrixWorld);
+        lift=Math.max(lift,crashGround(track,bike,contactPoint)-contactPoint.y+0.035);
+      }
+    }else if(part.geometry===cube){
+      for(const x of [-0.5,0.5])for(const y of [-0.5,0.5])for(const z of [-0.5,0.5]){
+        contactPoint.set(x,y,z).applyMatrix4(part.matrixWorld);
+        lift=Math.max(lift,crashGround(track,bike,contactPoint)-contactPoint.y+0.05);
+      }
+    }
+  }
+  return lift;
+}
+function animateCrash(view:RiderView,track:Track,bike:Bike,ground:number){
+  const age=CRASH_TIME-bike.crash;
+  const tumble=clamp(age/0.70,0,1);
+  const settle=T.MathUtils.smoothstep(age,0.86,CRASH_TIME);
+  const back=bike.crashKind===CrashKind.Back, side=bike.crashKind===CrashKind.Side;
+  const direction=back?-1:1;
+  const roll=T.MathUtils.smoothstep(age,0,0.47);
+  const arc=Math.sin(tumble*Math.PI);
+  view.root.position.y=ground+blend(0.72+arc*0.17,0.72,settle);
+  const upright=-Math.atan(track.bank(track.pose(bike.x).curvature));
+  view.body.rotation.x=upright+blend((side?bike.side:-0.64)*roll*1.46,0,settle);
+  view.body.rotation.z=blend(bike.pitch+(side?0.12:-direction*1.45)*roll,track.slope(bike.x,bike.z),settle);
+  view.root.updateMatrixWorld(true);
+  const bikeParts=view.body.children.filter(p=>p!==view.person);
+  for(const wheel of view.wheels)bikeParts.push(wheel.children[0]);
+  view.root.position.y+=clearance(track,bike,bikeParts)*(1-settle);
+  view.root.updateMatrixWorld(true);
+  const travel=1-Math.exp(-5.7*age);
+  const riderX=(side?0.65:direction*2.4)*travel;
+  const riderZ=(side?bike.side*1.4:bike.side*0.67)*travel;
+  const arcY=arc*(back?0.66:0.81);
+  const relative=new T.Vector3(riderX,-0.17*travel+arcY,riderZ);
+  relative.applyQuaternion(view.body.quaternion.clone().invert()).multiplyScalar(1-settle);
+  relative.y+=0.31*Math.sin(settle*Math.PI);
+  view.person.position.copy(relative);
+  const riderAngle=side?0.41:-direction*2.7*tumble;
+  const pose=new T.Quaternion().setFromEuler(new T.Euler((side?bike.side:-0.63)*1.36*tumble,0,riderAngle));
+  const detached=view.body.quaternion.clone().invert().multiply(pose);
+  view.person.quaternion.copy(neutral).slerp(detached,T.MathUtils.smoothstep(age,0,0.13)*(1-settle));
+  view.root.updateMatrixWorld(true);
+  const lift=clearance(track,bike,view.person.children);
+  worldCorrection.set(0,lift,0).applyQuaternion(view.body.getWorldQuaternion(new T.Quaternion()).invert());
+  view.person.position.add(worldCorrection);
 }
 function seeded(seed:number) {return () => {seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};}
 export const CAMERA_NAMES = ['Hero side','Broadcast','Rear chase','Front quarter'] as const;
@@ -207,52 +269,63 @@ class TitleTrack {
 }
 class RaceCrowd {
   readonly group=new T.Group();
-  private readonly arms:T.InstancedMesh;
-  private readonly fans:{x:number;y:number;z:number;side:number;phase:number;color:number}[]=[];
+  private readonly actors:T.InstancedMesh;
+  private readonly fans:{x:number;y:number;z:number;phase:number;color:number;skin:number}[]=[];
   private readonly pose=new T.Object3D();
   private response=0;
   private mood:'cheer'|'gasp'='cheer';
   constructor(readonly distance:number,track:Track,rng:()=>number){
-    const colors=[0xe74b4c,0xf4c8a1,0x427d83,0xd79c50,0x785a97,0xe9dac5];
-    const p=track.pose(distance,-11.4);
+    const colors=[0xff514d,0xffd99b,0x65a7a9,0xf4ae44,0xb785cc,0xf5e9ce];
+    const p=track.pose(distance,-10.0);
     this.group.position.set(p.x,p.y,p.z);
     this.group.rotation.y=-Math.atan2(p.fz,p.fx);
     const blocks:Block[]=[];
     for(let row=0;row<3;row++){
-      const y=0.64+row*0.62,z=-row*0.9;
-      blocks.push([0,y-0.40,z,8.9,0.6+row*0.32,0.91, row%2?0xa76a60:0xbf8472]);
+      const y=0.67+row*0.72,z=-row*1.04;
+      blocks.push([0,y-0.42,z,9.7,0.62+row*0.38,1.04,row%2?0xa76a60:0xbf8472]);
       for(let i=0;i<9;i++){
-        if(rng()<0.13)continue;
-        const x=(i-4)*0.95+(rng()-0.5)*0.16,color=colors[Math.floor(rng()*colors.length)];
-        blocks.push([x,y,z,0.42,0.48,0.38,color],[x,y+0.37,z,0.27,0.27,0.28,rng()<0.55?0xc18968:0x8f5d4a]);
-        const phase=rng()*Math.PI*2;
-        for(const side of [-1,1])this.fans.push({x,y:y+0.05,z,side,phase,color});
+        if(rng()<0.08)continue;
+        const x=(i-4)*1.05+(rng()-0.5)*0.14;
+        this.fans.push({x,y,z,phase:rng()*Math.PI*2,
+          color:colors[Math.floor(rng()*colors.length)],skin:rng()<0.55?0xe0ab7c:0xa47351});
       }
     }
     batch(this.group,blocks);
-    this.arms=new T.InstancedMesh(cube,decorationMaterial,this.fans.length);
-    this.fans.forEach((fan,i)=>this.arms.setColorAt(i,new T.Color(fan.color)));
-    this.arms.frustumCulled=false;
-    this.group.add(this.arms);
+    this.actors=new T.InstancedMesh(cube,decorationMaterial,this.fans.length*5);
+    this.fans.forEach((fan,i)=>{
+      [fan.color,fan.skin,fan.color,fan.color,fan.color].forEach((color,j)=>this.actors.setColorAt(i*5+j,new T.Color(color)));
+    });
+    this.actors.frustumCulled=false;
+    this.group.add(this.actors);
     this.update(0,0,0,true);
   }
   react(kind:'cheer'|'gasp',strength:number){
     this.mood=kind;this.response=Math.max(this.response,strength);
   }
+  private part(i:number,x:number,y:number,z:number,w:number,h:number,d:number,tilt=0,roll=0){
+    this.pose.position.set(x,y,z);this.pose.scale.set(w,h,d);
+    this.pose.rotation.set(tilt,0,roll);this.pose.updateMatrix();
+    this.actors.setMatrixAt(i,this.pose.matrix);
+  }
   update(time:number,dt:number,near:number,visible:boolean){
-    this.response=Math.max(0,this.response-dt*0.57);
+    this.response=Math.max(0,this.response-dt*0.48);
     if(!visible)return;
+    const cheer=this.mood==='cheer'?this.response:0,gasp=this.mood==='gasp'?this.response:0;
     this.fans.forEach((fan,i)=>{
-      const beat=Math.sin(time*7+fan.phase);
-      const cheer=this.mood==='cheer'?this.response:0;
-      const gasp=this.mood==='gasp'?this.response:0;
-      const lift=clamp(0.30+near*(0.58+beat*0.29)+cheer*(0.83+beat*0.32)-gasp*0.21,0.10,1.70);
-      this.pose.position.set(fan.x+fan.side*(0.21+lift*0.057-gasp*0.065),fan.y+lift*0.16,fan.z+gasp*0.20);
-      this.pose.rotation.set(gasp*1.1,0,fan.side*(0.41-lift*0.71-gasp*0.76));
-      this.pose.scale.set(0.13,0.40,0.15);this.pose.updateMatrix();
-      this.arms.setMatrixAt(i,this.pose.matrix);
+      const beat=Math.sin(time*7+fan.phase), bounce=Math.max(0,beat);
+      const rise=near*(0.07+bounce*0.17)+cheer*(0.48+bounce*0.33)-gasp*0.19;
+      const y=fan.y+rise,z=fan.z-gasp*0.30;
+      this.part(i*5,fan.x,y,z,0.43,0.50,0.42,-gasp*0.41);
+      this.part(i*5+1,fan.x,y+0.40,z-gasp*0.15,0.30,0.31,0.31);
+      this.part(i*5+2,fan.x,y+0.58,z-gasp*0.15,0.33,0.065,0.33);
+      for(let j=0;j<2;j++){
+        const side=j?1:-1;
+        const lift=clamp(near*(0.39+beat*0.26)+cheer*1.12,0,1);
+        this.part(i*5+3+j,fan.x+side*(0.25+lift*0.07),y+0.03+lift*0.49,z+gasp*0.27,
+          0.14,0.55,0.15,gasp*1.17,side*(0.25+lift*0.38));
+      }
     });
-    this.arms.instanceMatrix.needsUpdate=true;
+    this.actors.instanceMatrix.needsUpdate=true;
   }
 }
 export class View {
@@ -270,6 +343,7 @@ export class View {
   private riders:RiderView[]=[];
   private crowds:RaceCrowd[]=[];
   private crowdSerial=0;
+  private readonly visibility=new RiderVisibility();
   private dust:T.InstancedMesh;
   private particles:{x:number;y:number;z:number;life:number;size:number;color:number}[]=[];
   private track!:Track;
@@ -292,6 +366,7 @@ export class View {
   }
   reset(track:Track) {
     this.track=track;
+    this.visibility.reset();
     this.world.traverse(o=>{if (o instanceof T.InstancedMesh) o.dispose(); else if(o instanceof T.Mesh && o.geometry !== cube) { o.geometry.dispose(); o.material.map?.dispose(); o.material.dispose(); }});
     this.world.clear();
     this.crowds=[];this.crowdSerial=0;
@@ -308,8 +383,9 @@ export class View {
     const loop=!!track.circuit;
     const limit=loop?track.lapLength:track.end+44;
     if(track.circuit)box(this.world,palette.grass,0,track.circuit.floor-0.48,45,1050,0.7,1050);
-    for(let start=loop?0:-30;start<limit;start+=38){
-      const stop=Math.min(start+38,limit);
+    const chunkLength=loop&&track.course.theme===2?16:38;
+    for(let start=loop?0:-30;start<limit;start+=chunkLength){
+      const stop=Math.min(start+chunkLength,limit);
       const vertices:number[]=[], colors:number[]=[], blocks:Block[]=[];
       const color=new T.Color();
       const block=(x:number,y:number,z:number,w:number,h:number,d:number,c:number)=>{
@@ -362,7 +438,13 @@ export class View {
       }
       const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(vertices,3));
       g.setAttribute('color',new T.Float32BufferAttribute(colors,3));g.computeVertexNormals();
-      this.world.add(new T.Mesh(g,meshMaterial.clone()));
+      const surfaceMesh=new T.Mesh(g,meshMaterial.clone());
+      this.world.add(surfaceMesh);
+      if(loop&&track.course.theme===2){
+        const center=(start+stop)*0.5;
+        this.visibility.addGroup(surfaceMesh,s=>Math.abs(track.delta(center,s))>chunkLength+8&&
+          Math.hypot(track.pose(center).x-track.pose(s).x,track.pose(center).z-track.pose(s).z)<42);
+      }
       if(!loop){
         block((start+stop)/2,-1.14,1.5,stop-start,0.85,41,palette.grass);
         block((start+stop)/2,-1.53,-22,stop-start,0.85,9,palette.far);
@@ -456,7 +538,8 @@ export class View {
           for(let j=0;j<4;j++)block(x,1.65+j*0.56,z,3.2-j*0.62,0.59,2.95-j*0.5, j%2?0x566e58:0x63806b);
         }
       }
-      batch(this.world,blocks,track);
+      const scenery=batch(this.world,blocks,track);
+      this.visibility.addInstances(scenery,blocks.flatMap((b,i)=>Math.abs(b[2])>5.2||b[4]>2.2?[i]:[]));
     }
     meshMaterial.dispose();
     if(loop)this.banner(0,0,'START / FINISH',palette.trim);
@@ -467,11 +550,19 @@ export class View {
     for(let x=66;x<limit-20;x+=95){
       if(track.clearOfOtherRoad(x,-7.1,2.15,0.92))this.sign(x,x%2?'MX / 04':'DIRT CLUB',palette.trim);
     }
-    const crowdSpacing=track.course.theme===0?24:44;
-    for(let x=6;x<limit-9;x+=crowdSpacing){
-      if(!track.clearOfOtherRoad(x,-11.4,5.5,1.4))continue;
+    const crowdSpacing=track.course.theme===0?24:40;
+    const crowdSpots=new Set<number>();
+    for(let x=6;x<limit-9;x+=crowdSpacing)crowdSpots.add(x);
+    for(const section of track.segments){
+      const x=(section.x+section.end)*0.5;
+      if(['tabletop','split','drop','super','massif'].includes(section.piece)&&
+        ![...crowdSpots].some(s=>Math.abs(track.delta(s,x))<11))crowdSpots.add(x);
+    }
+    for(const x of crowdSpots){
+      if(!track.clearOfOtherRoad(x,-10,5.5,1.4))continue;
       const crowd=new RaceCrowd(x,track,rng);
       this.crowds.push(crowd);this.world.add(crowd.group);
+      this.visibility.addGroup(crowd.group,s=>Math.abs(track.delta(x,s))<45);
     }
     const cloudBlocks:Block[]=[];
     for(let x=loop?0:-50;x<(loop?track.lapLength:track.end+80);x+=33) {
@@ -498,7 +589,8 @@ export class View {
     const blocks:Block[]=[];
     for(let j=0;j<8;j++)blocks.push([x,y+0.32+j*0.64,-5.4,0.39,0.64,0.42,j%2?0xb42334:accent]);
     blocks.push([x,y+5.06,-0.2,0.33,0.38,10.4,0xb42334]);
-    batch(this.world,blocks.map(([s,py,z,w,h,d,c])=>[s,py+this.track.pose(s).y,z,w,h,d,c]),this.track);
+    const support=batch(this.world,blocks.map(([s,py,z,w,h,d,c])=>[s,py+this.track.pose(s).y,z,w,h,d,c]),this.track);
+    this.visibility.addInstances(support,blocks.map((_,i)=>i));
     const label=new T.Mesh(new T.PlaneGeometry(8.5,1.6),this.label(text,accent));
     label.material.side=T.FrontSide;
     label.rotation.y=-Math.PI/2;this.place(label,x-0.22,y+5.55,0);
@@ -508,6 +600,7 @@ export class View {
     const side=new T.Mesh(new T.PlaneGeometry(4.8,0.9),label.material.clone());
     this.place(side,x,y+5.55,-4.35);
     this.world.add(label,reverse,side);
+    for(const board of [label,reverse,side])this.visibility.addGroup(board,s=>Math.abs(this.track.delta(x,s))<45);
     if(text!=='VOXEL BIKES'){
       const line:Block[]=[];
       for(let i=0;i<16;i++)for(let j=0;j<2;j++)line.push([x+j*0.34,this.track.height(x+j*0.34,-4.5+i*0.6)+0.028,-4.5+i*0.6,0.34,0.038,0.60,(i+j)%2?0x303235:0xf3e1be]);
@@ -517,6 +610,7 @@ export class View {
   private sign(x:number,text:string,accent:number){
     const label=new T.Mesh(new T.PlaneGeometry(4.3,0.8),this.label(text,accent));
     this.place(label,x,0.92,-7.1);this.world.add(label);
+    this.visibility.addGroup(label,s=>Math.abs(this.track.delta(x,s))<45);
   }
   frame(dt:number,race:Race|undefined,alpha:number) {
     const canvas=this.renderer.domElement;
@@ -533,14 +627,20 @@ export class View {
     const bikes:Bike[]=[race.rider,...race.rivals].map((b,i)=>{
       const prev=race.previous[i];
       return {...b,x:blend(prev.x,b.x,alpha),y:blend(prev.y,b.y,alpha),z:blend(prev.z,b.z,alpha),
-        pitch:blend(prev.pitch,b.pitch,alpha),lean:blend(prev.lean,b.lean,alpha),spin:blend(prev.spin,b.spin,alpha)};
+        pitch:blend(prev.pitch,b.pitch,alpha),lean:blend(prev.lean,b.lean,alpha),spin:blend(prev.spin,b.spin,alpha),
+        crash:prev.crashKind===b.crashKind?blend(prev.crash,b.crash,alpha):b.crash};
     });
     const r=bikes[0];
     const n=bikes.length;
-    while(this.riders.length<n) this.riders.push(makeRider(this.scene,[0xd32a3c,0x56bcb6,0xffc35d,0x8c91e8][this.riders.length]));
+    while(this.riders.length<n){
+      const rival=this.riders.length>0;
+      const view=makeRider(this.scene,[0xd32a3c,0x56bcb6,0xffc35d,0x8c91e8][this.riders.length]);
+      if(rival)this.visibility.addGroup(view.root);
+      this.riders.push(view);
+    }
     const ghost=race?.ghost;
     if(ghost&&this.riders.length===n)this.riders.push(makeRider(this.scene,0xbafcf2,true));
-    const showGhost=ghost && race.time>=0 && race.time<=ghost.time;
+    const showGhost=ghost && race.time>=0 && race.time<=ghost.frames[ghost.frames.length-1][0];
     if(showGhost){
       const i=clamp(Math.floor(race.time/(DT*6)),0,ghost.frames.length-1);
       const a=ghost.frames[i],b=ghost.frames[Math.min(i+1,ghost.frames.length-1)];
@@ -562,31 +662,9 @@ export class View {
       view.person.position.set(0,-bike.impact*0.13,0);
       view.person.rotation.set(0,0,-bike.impact*0.17-bike.wheelie*0.14+
         Math.sin(this.elapsed*18)*Math.min(0.025,bike.speed/900));
-      if(bike.crash){
-        const age=CRASH_TIME-bike.crash, tumble=clamp(age/0.68,0,1);
-        const back=bike.crashKind===CrashKind.Back, side=bike.crashKind===CrashKind.Side;
-        const direction=back?-1:1, recover=clamp((age-0.85)/(CRASH_TIME-0.85),0,1);
-        const settle=recover*recover*(3-2*recover);
-        const kick=Math.sin(tumble*Math.PI)*0.54;
-        view.root.position.y=ground+blend(0.63-kick*0.25,0.72,settle);
-        view.body.rotation.x=blend((side?bike.side:-0.64)*Math.min(1,tumble*2)*1.46,0,settle);
-        view.body.rotation.z=blend(bike.pitch+(side?0.12:-direction*1.45)*Math.min(1,tumble*1.65),
-          this.track.slope(bike.x,bike.z),settle);
-        const travel=1-Math.exp(-5.7*age);
-        const riderX=(side?0.46:direction*2.2)*travel;
-        const riderZ=(side?bike.side*1.35:bike.side*0.69)*travel;
-        // Counter the chassis rotation so the rider tumbles and then remounts on a separate arc.
-        view.person.rotation.set(0,0,0);
-        const relative=new T.Vector3(riderX,trackHeightOffset(this.track,bike,riderX,riderZ)-0.37+kick,riderZ);
-        relative.applyQuaternion(view.body.quaternion.clone().invert()).multiplyScalar(1-settle);
-        relative.y+=0.24*Math.sin(settle*Math.PI);
-        view.person.position.copy(relative);
-        const riderAngle=side?0.41:-direction*2.9*tumble;
-        const pose=new T.Quaternion().setFromEuler(new T.Euler((side?bike.side:-0.55)*1.18*tumble,0,riderAngle));
-        view.person.quaternion.copy(view.body.quaternion.clone().invert().multiply(pose)).slerp(neutral,settle);
-      }
       view.fork.scale.y=0.14-bike.impact*0.026;
       view.wheels.forEach(w=>{w.rotation.z=bike.spin;w.position.y=-0.18+bike.impact*0.08;});
+      if(bike.crash)animateCrash(view,this.track,bike,ground);
       view.shadow.position.set(pose.x,ground+0.040,pose.z);
       view.shadow.rotation.set(-Math.atan(this.track.bank(pose.curvature)),yaw,this.track.slope(bike.x,bike.z),'YXZ');
       (view.shadow.material as T.MeshBasicMaterial).opacity=clamp(0.26-(bike.y-ground-0.72)*0.054,0.06,0.28);
@@ -619,7 +697,7 @@ export class View {
     for(const crowd of this.crowds){
       if(newEvent){
         const distance=Math.abs(this.track.delta(crowd.distance,crowdEvent.x));
-        if(distance<58)crowd.react(crowdEvent.kind,1-distance/78);
+        if(distance<58)crowd.react(crowdEvent.kind,1-distance/88);
       }
       const distance=Math.abs(this.track.delta(crowd.distance,r.x));
       crowd.update(this.elapsed,dt,this.reduceMotion?0:clamp(1-distance/19,0,1),distance<105||newEvent);
@@ -667,6 +745,8 @@ export class View {
     this.camera.lookAt(this.focus);
     this.cameraReady=true;
     this.camera.updateProjectionMatrix();
+    this.scene.updateMatrixWorld(true);
+    this.visibility.update(this.camera,this.riders[0].person,r.x,dt);
     this.renderer.render(this.scene,this.camera);
   }
 }

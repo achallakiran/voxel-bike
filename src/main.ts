@@ -4,9 +4,9 @@ import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
 type Screen = 'home'|'select'|'settings'|'builder'|'race'|'pause'|'results'|'rotate'|'error';
-type Action = 'up'|'down'|'back'|'forward'|'gas'|'turbo';
+type Action = 'up'|'down'|'back'|'forward'|'gas'|'brake'|'turbo';
 const screens: Screen[]=['home','select','settings','builder','race','pause','results','rotate','error'];
-const keys: Record<string, Action> = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'back',ArrowRight:'forward',KeyZ:'gas',KeyX:'turbo'};
+const keys: Record<string, Action> = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'back',ArrowRight:'forward',KeyZ:'gas',Space:'brake',KeyX:'turbo'};
 const prefix='voxel-bikes:v1:';
 function load<T>(key:string, fallback:T):T {
   try { return JSON.parse(localStorage.getItem(prefix+key) ?? 'null') ?? fallback; }
@@ -24,6 +24,7 @@ function clock(value:number) {
 class Sound {
   enabled=true;
   private lastCrowd=0;
+  private duckUntil=0;
   private crowdNoise?:AudioBuffer;
   private ctx?:AudioContext;
   private gain?:GainNode;
@@ -42,7 +43,7 @@ class Sound {
       if(this.ctx.state!=='running')void this.ctx.resume().catch(()=>{});
     }catch{ /* Gameplay continues if audio is unavailable. */ }
   }
-  resetCrowd(){this.lastCrowd=0;}
+  resetCrowd(){this.lastCrowd=0;this.duckUntil=0;}
   private crowd(race:Race){
     const reaction=race.crowd, ctx=this.ctx;
     if(!reaction||reaction.serial===this.lastCrowd||!ctx)return;
@@ -59,11 +60,12 @@ class Sound {
     }
     const source=ctx.createBufferSource(), band=ctx.createBiquadFilter(), gain=ctx.createGain(), now=ctx.currentTime;
     const cheer=reaction.kind==='cheer';
+    this.duckUntil=now+0.63;
     source.buffer=this.crowdNoise;
-    band.type='bandpass';band.Q.value=0.85;band.frequency.value=cheer?1050:660;
-    band.frequency.exponentialRampToValueAtTime(cheer?1490:430,now+0.45);
+    band.type='bandpass';band.Q.value=0.85;band.frequency.value=cheer?1190:630;
+    band.frequency.exponentialRampToValueAtTime(cheer?1770:365,now+0.45);
     gain.gain.setValueAtTime(0.001,now);
-    gain.gain.exponentialRampToValueAtTime(cheer?0.13:0.10,now+0.075);
+    gain.gain.exponentialRampToValueAtTime(cheer?0.23:0.19,now+0.075);
     gain.gain.exponentialRampToValueAtTime(0.001,now+0.82);
     source.connect(band).connect(gain).connect(ctx.destination);
     source.start();
@@ -74,7 +76,8 @@ class Sound {
     const bike=race?.rider;
     const running=this.enabled&&bike&&!race.done&&race.time>0;
     const now=this.ctx.currentTime;
-    this.gain.gain.setTargetAtTime(running?(bike.crash?0.014:race.inputs.gas||race.inputs.turbo?0.055:0.026):0,now,0.05);
+    const motor=running?(bike.crash?0.014:!race.inputs.brake&&(race.inputs.gas||race.inputs.turbo)?0.055:0.026):0;
+    this.gain.gain.setTargetAtTime(motor*(now<this.duckUntil?0.36:1),now,0.05);
     if(!running)return;
     const rev=43+bike.speed*2.9+(bike.air?18:0)+(race.inputs.turbo&&!bike.hot?13:0);
     this.engine.frequency.setTargetAtTime(bike.crash?38:rev,now,0.035);
@@ -114,6 +117,10 @@ const portrait=matchMedia('(orientation: portrait)');
 const sound=new Sound();
 const settings=load<{sound:boolean;quality:boolean;camera?:number}>('settings',{sound:true,quality:true});
 let cameraIndex:CameraIndex=0;
+const lapSetting=el<HTMLSelectElement>('lapSetting');
+const savedLaps=load('raceLaps',3);
+let raceLaps=[3,5,7].includes(savedLaps)?savedLaps:3;
+lapSetting.value=String(raceLaps);
 const nameInput=el<HTMLInputElement>('trackName');
 const themeInput=el<HTMLSelectElement>('theme');
 const shapeInput=el<HTMLSelectElement>('trackShape');
@@ -123,7 +130,7 @@ let view:View|undefined;
 let countdown='', lastSignal='';
 function storedRun(id:string) {
   if(runRecords.has(id))return runRecords.get(id);
-  const r=load<RecordRun|null>('best:v4:'+id,null);
+  const r=load<RecordRun|null>('best:v5:'+id,null);
   if(r&&Number.isFinite(r.time)&&r.time>0&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===10&&f.every(Number.isFinite))){
     runRecords.set(id,r);return r;
   }
@@ -162,27 +169,35 @@ const coursePreviews=COURSES.map(course=>{
   return {length:track.lapLength,diagram:'<svg class="route-preview" viewBox="0 0 100 46" aria-hidden="true"><polygon points="'+
     points.map(plot).join(' ')+'"/><circle cx="'+startX+'" cy="'+startY+'" r="2.4"/></svg>'};
 });
+lapSetting.addEventListener('change',()=>{
+  raceLaps=Number(lapSetting.value);
+  save('raceLaps',raceLaps);
+  renderCourses();
+});
 function choose(next:Mode){
   mode=next;
+  renderCourses();
+  show('select');
+}
+function renderCourses(){
   el('modeTitle').textContent=mode==='trial'?'Time Trial':'Rival Race';
   el('courses').replaceChildren(...COURSES.map((c,i)=>{
     const b=document.createElement('button');b.className='course-card';
     b.style.setProperty('--card',['#b42630','#925557','#713538','#c02430','#b48580'][i]);
-    const best=mode==='trial'?storedRun(c.id):undefined;
+    const best=mode==='trial'?storedRun(c.id+':'+raceLaps):undefined;
     const preview=coursePreviews[i];
     b.innerHTML='<span class="card-index">0'+(i+1)+' · '+preview.length+' M</span>'+preview.diagram+'<b>'+c.name+'</b><span>'+c.tagline+'</span>'+
-      '<small>'+(next==='trial'?'QUALIFY '+clock(c.gold*1.29):'2 LAPS')+
+      '<small>'+(mode==='trial'?'QUALIFY '+clock(c.gold*raceLaps*1.29):raceLaps+' LAPS')+
       (best?' · BEST '+clock(best.time):'')+'</small>';
     b.addEventListener('click',()=>start(c));return b;
   }));
-  show('select');
 }
 function start(c:Course){
   if(!view)return;
   course=c;
-  const track=new Track(course,mode==='rival'?2:1);
+  const track=new Track(course,mode==='test'?1:raceLaps);
   view.reset(track);
-  race=new Race(track,mode,mode==='trial'?storedRun(course.id):undefined);
+  race=new Race(track,mode,mode==='trial'?storedRun(course.id+':'+track.laps):undefined);
   sound.resetCrowd();sound.unlock();
   el('courseLabel').textContent=course.name.toUpperCase();
   el('pauseExit').textContent=mode==='test'?'← Track Builder':'← Main menu';
@@ -193,26 +208,32 @@ function start(c:Course){
 }
 function endRace(finished:Race){
   el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':mode==='trial'?'Time Trial':'Test Ride');
-  el('resultTime').textContent=clock(finished.rider.finish);
+  el('resultTime').textContent=clock(finished.elapsed);
   let title='Run complete',detail='Course cleared';
   if(mode==='rival'){
     title=['1st place','2nd place','3rd place','4th place'][finished.position-1];
-    const first=finished.splits[0];
-    detail='Lap 1 '+clock(first)+' · Lap 2 '+clock(finished.rider.finish-first);
+    detail='Position '+finished.position+' / '+(finished.rivals.length+1);
   }
   if(mode==='trial'){
-    const time=finished.rider.finish;
-    const best=storedRun(course.id);
-    const medal=time<=course.gold?'Gold':time<=course.gold*1.16?'Silver':time<=course.gold*1.36?'Bronze':'No';
+    const time=finished.elapsed, target=course.gold*finished.track.laps;
+    const key=course.id+':'+finished.track.laps;
+    const best=storedRun(key);
+    const medal=time<=target?'Gold':time<=target*1.16?'Silver':time<=target*1.36?'Bronze':'No';
     title=medal==='No'?'Finish':medal+' medal';
     if(!best||time<best.time){
       const run={time,frames:finished.record};
-      runRecords.set(course.id,run);
-      const saved=save('best:v4:'+course.id,run);
+      runRecords.set(key,run);
+      const saved=save('best:v5:'+key,run);
       detail=saved?'New personal best · Ghost saved':'New personal best · Ghost available this session';
     }else detail='Personal best '+clock(best.time)+' · +'+(time-best.time).toFixed(2)+' s';
-    detail+=' · '+(time<=course.gold*1.29?'Qualified':'Target '+clock(course.gold*1.29));
+    detail+=' · '+(time<=target*1.29?'Qualified':'Target '+clock(target*1.29));
   }
+  const fastest=Math.min(...finished.splits);
+  el('lapResults').replaceChildren(...finished.splits.map((lap,i)=>{
+    const row=document.createElement('li');
+    row.textContent='Lap '+(i+1)+' · '+clock(lap)+(lap===fastest?'  ★':'');
+    return row;
+  }));
   el('resultTitle').textContent=title;
   el('resultDetail').textContent=detail;
   sound.beep(784,0.36);
@@ -224,8 +245,8 @@ function setFill(id:string,percent:number){
 }
 function hud(r:Race){
   el('timeLabel').textContent=r.mode==='rival'?'P'+r.position+' / '+(r.rivals.length+1):'TIME';
-  el('time').textContent=clock(r.time);
-  el('lap').textContent=r.track.laps>1?' · '+r.lap+'/'+r.track.laps:'';
+  el('time').textContent=clock(r.elapsed);
+  el('lap').textContent=' · LAP '+r.lap+' / '+r.track.laps;
   setFill('progress',clamp((r.rider.x-r.startX)/(r.track.end-r.startX)*100,0,100));
   setFill('heat',r.rider.heat);
   const heatLabel=el('heatLabel'), label=r.rider.hot?'ENGINE CUT':'ENGINE HEAT';
@@ -245,7 +266,7 @@ function hud(r:Race){
     if(cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out'||cue==='Bump crash'||cue==='Dirt trap crash')sound.beep(130,0.28);
     else if(cue==='Rough landing'||cue==='Bump')sound.beep(106,0.10);
     else if(cue==='Clean landing')sound.beep(196,0.09);
-    else if(cue==='Lap 2')sound.beep(710,0.22);
+    else if(cue.startsWith('Lap '))sound.beep(710,0.22);
     else if(cue==='Cooling')sound.beep(590);
   }
   lastSignal=cue??'';
@@ -263,7 +284,7 @@ portrait.addEventListener('change',orientation);coarse.addEventListener('change'
 function readInput(){
   const active=new Set(held.values());
   if(race){
-    race.inputs.gas=active.has('gas');race.inputs.turbo=active.has('turbo');
+    race.inputs.gas=active.has('gas');race.inputs.brake=active.has('brake');race.inputs.turbo=active.has('turbo');
     race.inputs.pitch=clamp(stickPitch+Number(active.has('back'))-Number(active.has('forward')),-1,1);
   }
   for(const b of tapButtons)b.classList.toggle('active',active.has(b.dataset.action as Action));
@@ -279,11 +300,13 @@ function steerStick(e:PointerEvent){
   const y=(e.clientY-bounds.top-bounds.height/2)/radius;
   const length=Math.hypot(x,y), scale=Math.max(1,length);
   stickThumb.style.transform='translate('+x*radius/scale+'px,'+y*radius/scale+'px)';
-  if(length<0.21){stickAxis=null;stickPitch=0;stickLane=0;readInput();return;}
-  if(!stickAxis&&length>0.33)stickAxis=Math.abs(y)>Math.abs(x)?'lane':'pitch';
-  stickPitch=stickAxis==='pitch'?-Math.sign(x)*clamp((Math.abs(x)-0.2)/0.8,0,1):0;
-  const lane=stickAxis==='lane'&&Math.abs(y)>0.37?Math.sign(y):0;
-  if(lane!==stickLane&&lane){race?.moveLane(lane);laneRepeat=performance.now()+305;}
+  if(length<0.12){stickAxis=null;stickPitch=0;stickLane=0;readInput();return;}
+  const ax=Math.abs(x),ay=Math.abs(y), bias=0.10;
+  if(!stickAxis||ax>ay+bias)stickAxis=ax>=ay?'pitch':'lane';
+  else if(ay>ax+bias)stickAxis='lane';
+  stickPitch=stickAxis==='pitch'?-Math.sign(x)*Math.sqrt(clamp((ax-0.10)/0.78,0,1)):0;
+  const lane=stickAxis==='lane'&&ay>0.23?Math.sign(y):0;
+  if(lane!==stickLane&&lane){race?.moveLane(lane);laneRepeat=performance.now()+220;}
   stickLane=lane;
   readInput();
 }
@@ -458,7 +481,7 @@ let last=performance.now(), accumulator=0;
 function loop(now:number){
   const dt=clamp((now-last)/1000,0,0.12);last=now;
   if(screen==='race'&&race){
-    if(stickLane&&now>=laneRepeat){race.moveLane(stickLane);laneRepeat=now+215;}
+    if(stickLane&&now>=laneRepeat){race.moveLane(stickLane);laneRepeat=now+175;}
     accumulator+=dt;
     while(accumulator>=DT){race.step(DT);accumulator-=DT;}
     hud(race);
