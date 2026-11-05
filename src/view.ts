@@ -441,15 +441,15 @@ export class View {
     const light=conditions.light;
     if(light==='Morning'){sky.lerp(new T.Color(0xbad9ed),0.55);fog.lerp(new T.Color(0xc2d2df),0.55);}
     if(light==='Evening'){sky.lerp(new T.Color(0xf2916d),0.7);fog.lerp(new T.Color(0xa26371),0.45);}
-    if(night){sky.setHex(0x111b31);fog.setHex(0x202d47);}
-    if(wet){sky.lerp(new T.Color(night?0x101829:0x667883),0.45);fog.lerp(sky,0.52);}
+    if(night){sky.setHex(0x050911);fog.setHex(0x0a1120);}
+    if(wet){sky.lerp(new T.Color(night?0x080d17:0x667883),0.45);fog.lerp(sky,0.52);}
     this.scene.background=sky;
-    this.scene.fog=new T.Fog(fog,night?24:wet?23:light==='Morning'?25:30,night?99:wet?94:125);
+    this.scene.fog=new T.Fog(fog,night?28:wet?23:light==='Morning'?25:30,night?81:wet?94:125);
     this.hemi.color.setHex(night?0x9cbcff:light==='Morning'?0xe7f6ff:0xffecd0);
-    this.hemi.intensity=(night?0.90:light==='Evening'?1.55:2.05)*(wet?0.87:1);
+    this.hemi.intensity=(night?0.17:light==='Evening'?1.55:2.05)*(wet?0.87:1);
     this.sun.position.set(-12,night?12:light==='Evening'?5:light==='Morning'?8:18,8);
     this.sun.color.setHex(night?0x879de7:light==='Evening'?0xffb57a:0xffead3);
-    this.lightBase=(night?0.35:light==='Evening'?1.65:2)*(wet?0.68:1);
+    this.lightBase=(night?0.055:light==='Evening'?1.65:2)*(wet?0.68:1);
     this.sun.intensity=this.lightBase;
     const rng=seeded(632+track.course.theme);
     const meshMaterial=new T.MeshStandardMaterial({vertexColors:true,roughness:1,side:T.DoubleSide});

@@ -5,9 +5,9 @@ import type {Conditions} from './conditions';
 type Smoke={position:T.Vector3; age:number; life:number; size:number; heat:boolean};
 
 export class RaceEffects {
-  private readonly headlight=new T.SpotLight(0xffe0ae,370,36,0.42,0.7,1.4);
-  private readonly finishLights=[new T.PointLight(0xffe2c5,130,26,1.25),new T.PointLight(0xe0eaff,105,24,1.25)];
-  private readonly markers=new T.InstancedMesh(new T.BoxGeometry(0.30,0.045,0.19),new T.MeshBasicMaterial({color:0xe7e8da}),768);
+  private readonly headlight=new T.SpotLight(0xffe0ae,620,37,0.37,0.63,1.4);
+  private readonly finishLights=[new T.PointLight(0xffe2c5,84,22,1.25),new T.PointLight(0xe0eaff,68,20,1.25)];
+  private readonly markers=new T.InstancedMesh(new T.BoxGeometry(0.30,0.045,0.19),new T.MeshBasicMaterial({color:0xa0a5a5}),768);
   private readonly exhaust=new T.InstancedMesh(new T.BoxGeometry(),new T.MeshBasicMaterial({
     transparent:true,opacity:0.33,depthWrite:false
   }),72);
@@ -36,6 +36,7 @@ export class RaceEffects {
     this.lastPuff=-1;
     this.puffs.length=0;this.exhaust.count=0;this.markers.count=0;
     const night=conditions.light==='Night';
+    (this.rain.material as T.LineBasicMaterial).opacity=night?0.20:0.32;
     this.headlight.visible=night;this.rain.visible=conditions.weather!=='Clear';
     const finish=track.circuit?0:track.end;
     for(const [index,light] of this.finishLights.entries()){
@@ -63,8 +64,8 @@ export class RaceEffects {
       body.updateWorldMatrix(true,false);
       this.anchor.set(0.67,0.50,0).applyMatrix4(body.matrixWorld);
       this.headlight.position.copy(this.anchor);
-      const ahead=this.track.pose(rider.x+15,rider.z);
-      this.headlight.target.position.set(ahead.x,this.track.height(rider.x+15,rider.z)+0.28,ahead.z);
+      const ahead=this.track.pose(rider.x+13,rider.z);
+      this.headlight.target.position.set(ahead.x,this.track.height(rider.x+13,rider.z)+0.28,ahead.z);
     }
     const interval=rider.hot?0.078:turbo?0.10:0.24;
     if(time>0&&time-this.lastPuff>=interval){
