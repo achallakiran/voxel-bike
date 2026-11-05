@@ -1,4 +1,5 @@
 import {COURSES, PIECES, DT, Track, Race, clamp, type Course, type Piece, type Mode, type RecordRun} from './race';
+import {pieceSpec} from './tracks';
 import {View} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
@@ -66,15 +67,18 @@ function validDraft(value:unknown):value is Draft {
   if(!value||typeof value!=='object')return false;
   const d=value as Draft;
   return d.format==='voxel-bikes-track'&&d.version===1&&typeof d.name==='string'&&d.name.length<=36&&
-    Number.isInteger(d.theme)&&d.theme>=0&&d.theme<=2&&Array.isArray(d.layout)&&d.layout.length<=28&&
-    d.layout.every(p=>Object.hasOwn(PIECES,p));
+    Number.isInteger(d.theme)&&d.theme>=0&&d.theme<=4&&Array.isArray(d.layout)&&d.layout.length<=28&&
+    d.layout.every(p=>typeof p==='string'&&Object.hasOwn(PIECES,p));
 }
 let draft=load('draft',defaultDraft);
 if(!validDraft(draft))draft=defaultDraft;
 let selected=-1;
 let screen:Screen='home', mode:Mode='trial', race:Race|undefined;
 let course:Course=COURSES[0];
-let held=new Map<string,Action>();
+const held=new Map<string,Action>();
+const stick=el('joystick'), stickThumb=el('stickThumb');
+let stickPointer:number|null=null, stickAxis:'lane'|'pitch'|null=null;
+let stickPitch=0, stickLane=0, laneRepeat=0;
 const tapButtons=Array.from(document.querySelectorAll<HTMLButtonElement>('[data-action]'));
 const coarse=matchMedia('(any-pointer: coarse)');
 const portrait=matchMedia('(orientation: portrait)');
@@ -88,15 +92,21 @@ let view:View|undefined;
 let countdown='', lastSignal='';
 function storedRun(id:string) {
   if(runRecords.has(id))return runRecords.get(id);
-  const r=load<RecordRun|null>('best:'+id,null);
-  if(r&&Number.isFinite(r.time)&&r.time>0&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===6&&f.every(Number.isFinite))){
+  const r=load<RecordRun|null>('best:v2:'+id,null);
+  if(r&&Number.isFinite(r.time)&&r.time>0&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===10&&f.every(Number.isFinite))){
     runRecords.set(id,r);return r;
   }
   return undefined;
 }
 function button(id:string, handler:()=>void) {el(id).addEventListener('click',handler);}
 function clearInput(){
-  held.clear();readInput();
+  held.clear();
+  if(stickPointer!==null){
+    const pointer=stickPointer;stickPointer=null;
+    if(stick.hasPointerCapture(pointer))stick.releasePointerCapture(pointer);
+  }
+  resetStick();
+  readInput();
 }
 function show(next:Screen){
   screen=next;clearInput();
@@ -116,10 +126,11 @@ function choose(next:Mode){
   el('modeTitle').textContent=mode==='trial'?'Time Trial':'Rival Race';
   el('courses').replaceChildren(...COURSES.map((c,i)=>{
     const b=document.createElement('button');b.className='course-card';
-    b.style.setProperty('--card',['#a57550','#776885','#487e82'][i]);
+    b.style.setProperty('--card',['#b42630','#925557','#713538','#c02430','#b48580'][i]);
     const best=mode==='trial'?storedRun(c.id):undefined;
     b.innerHTML='<span class="card-index">0'+(i+1)+'</span><b>'+c.name+'</b><span>'+c.tagline+'</span>'+
-      (best?'<small>BEST '+clock(best.time)+'</small>':'');
+      '<small>'+(next==='trial'?'QUALIFY '+clock(c.gold*1.29):'2 LAPS')+
+      (best?' · BEST '+clock(best.time):'')+'</small>';
     b.addEventListener('click',()=>start(c));return b;
   }));
   show('select');
@@ -127,7 +138,7 @@ function choose(next:Mode){
 function start(c:Course){
   if(!view)return;
   course=c;
-  const track=new Track(course);
+  const track=new Track(course,mode==='rival'?2:1);
   view.reset(track);
   race=new Race(track,mode,mode==='trial'?storedRun(course.id):undefined);
   sound.unlock();
@@ -144,7 +155,8 @@ function endRace(finished:Race){
   let title='Run complete',detail='Course cleared';
   if(mode==='rival'){
     title=['1st place','2nd place','3rd place','4th place'][finished.position-1];
-    detail='Finished '+finished.position+' of '+(finished.rivals.length+1);
+    const first=finished.splits[0];
+    detail='Lap 1 '+clock(first)+' · Lap 2 '+clock(finished.rider.finish-first);
   }
   if(mode==='trial'){
     const time=finished.rider.finish;
@@ -154,9 +166,10 @@ function endRace(finished:Race){
     if(!best||time<best.time){
       const run={time,frames:finished.record};
       runRecords.set(course.id,run);
-      const saved=save('best:'+course.id,run);
+      const saved=save('best:v2:'+course.id,run);
       detail=saved?'New personal best · Ghost saved':'New personal best · Ghost available this session';
     }else detail='Personal best '+clock(best.time)+' · +'+(time-best.time).toFixed(2)+' s';
+    detail+=' · '+(time<=course.gold*1.29?'Qualified':'Target '+clock(course.gold*1.29));
   }
   el('resultTitle').textContent=title;
   el('resultDetail').textContent=detail;
@@ -170,6 +183,7 @@ function setFill(id:string,percent:number){
 function hud(r:Race){
   el('timeLabel').textContent=r.mode==='rival'?'P'+r.position+' / '+(r.rivals.length+1):'TIME';
   el('time').textContent=clock(r.time);
+  el('lap').textContent=r.track.laps>1?' · '+r.lap+'/'+r.track.laps:'';
   setFill('progress',clamp((r.rider.x-5)/(r.track.end-5)*100,0,100));
   setFill('heat',r.rider.heat);
   el('heat').closest('.hud-chip')?.classList.toggle('hot',r.rider.hot);
@@ -182,9 +196,12 @@ function hud(r:Race){
   const cue=r.feedbackTime>0?r.feedback:null;
   const feedback=el('feedback');
   feedback.hidden=!cue||!!message;feedback.textContent=cue??'';
-  feedback.classList.toggle('danger',cue==='Overheated'||cue==='Wipeout'||cue==='Contact');
+  feedback.classList.toggle('danger',cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out'||cue==='Contact');
   if(cue&&cue!==lastSignal){
-    if(cue==='Overheated'||cue==='Wipeout')sound.beep(130,0.28);
+    if(cue==='Overheated'||cue==='Wipeout'||cue==='Loop-out')sound.beep(130,0.28);
+    else if(cue==='Rough landing'||cue==='Bump')sound.beep(106,0.10);
+    else if(cue==='Clean landing')sound.beep(196,0.09);
+    else if(cue==='Lap 2')sound.beep(710,0.22);
     else if(cue==='Cooling')sound.beep(590);
   }
   lastSignal=cue??'';
@@ -203,10 +220,48 @@ function readInput(){
   const active=new Set(held.values());
   if(race){
     race.inputs.gas=active.has('gas');race.inputs.turbo=active.has('turbo');
-    race.inputs.pitch=Number(active.has('back'))-Number(active.has('forward'));
+    race.inputs.pitch=clamp(stickPitch+Number(active.has('back'))-Number(active.has('forward')),-1,1);
   }
   for(const b of tapButtons)b.classList.toggle('active',active.has(b.dataset.action as Action));
 }
+function resetStick(){
+  stickAxis=null;stickPitch=0;stickLane=0;laneRepeat=0;
+  stickThumb.style.transform='';
+  stick.classList.remove('active');
+}
+function steerStick(e:PointerEvent){
+  const bounds=stick.getBoundingClientRect(), radius=bounds.width*0.31;
+  const x=(e.clientX-bounds.left-bounds.width/2)/radius;
+  const y=(e.clientY-bounds.top-bounds.height/2)/radius;
+  const length=Math.hypot(x,y), scale=Math.max(1,length);
+  stickThumb.style.transform='translate('+x*radius/scale+'px,'+y*radius/scale+'px)';
+  if(length<0.21){stickAxis=null;stickPitch=0;stickLane=0;readInput();return;}
+  if(!stickAxis&&length>0.33)stickAxis=Math.abs(y)>Math.abs(x)?'lane':'pitch';
+  stickPitch=stickAxis==='pitch'?-Math.sign(x)*clamp((Math.abs(x)-0.2)/0.8,0,1):0;
+  const lane=stickAxis==='lane'&&Math.abs(y)>0.37?Math.sign(y):0;
+  if(lane!==stickLane&&lane){race?.moveLane(lane);laneRepeat=performance.now()+305;}
+  stickLane=lane;
+  readInput();
+}
+stick.addEventListener('pointerdown',e=>{
+  if(screen!=='race'||stickPointer!==null||e.button!==0)return;
+  e.preventDefault();stickPointer=e.pointerId;
+  stick.setPointerCapture(e.pointerId);stick.classList.add('active');sound.unlock();steerStick(e);
+});
+stick.addEventListener('pointermove',e=>{if(e.pointerId===stickPointer)steerStick(e);});
+function releaseStick(e:PointerEvent){
+  if(e.pointerId!==stickPointer)return;
+  stickPointer=null;resetStick();readInput();
+}
+for(const event of ['pointerup','pointercancel','lostpointercapture'] as const)stick.addEventListener(event,releaseStick);
+const raceScreen=el('race');
+raceScreen.addEventListener('contextmenu',e=>e.preventDefault());
+raceScreen.addEventListener('selectstart',e=>e.preventDefault());
+raceScreen.addEventListener('touchstart',e=>{
+  if(e.target instanceof Element&&e.target.closest('.joystick,.pedals')&&e.cancelable)e.preventDefault();
+},{passive:false});
+raceScreen.addEventListener('gesturestart',e=>{if(e.cancelable)e.preventDefault();},{passive:false});
+raceScreen.addEventListener('wheel',e=>{if(e.ctrlKey&&e.cancelable)e.preventDefault();},{passive:false});
 function press(id:string,action:Action){
   if(screen!=='race'||held.has(id))return;
   sound.unlock();
@@ -243,7 +298,7 @@ function renderDraft(scroll=false){
   const layout=el('layout');
   layout.replaceChildren(...draft.layout.map((piece,i)=>{
     const b=document.createElement('button');
-    b.textContent=(i+1)+' · '+PIECES[piece].icon+' '+PIECES[piece].name;
+    b.textContent=(i+1)+' · '+(pieceSpec(piece).code??pieceSpec(piece).icon)+' '+pieceSpec(piece).name;
     b.setAttribute('aria-pressed',String(i===selected));
     b.addEventListener('click',()=>{selected=i;renderDraft();(layout.children[i] as HTMLButtonElement | undefined)?.focus({preventScroll:true});});
     return b;
@@ -266,8 +321,10 @@ function showBuilder(){
   themeInput.value=String(draft.theme);
   renderDraft();show('builder');
 }
-for(const [piece,detail] of Object.entries(PIECES)){
-  const b=document.createElement('button');b.innerHTML='<span class="piece-icon">'+detail.icon+'</span>'+detail.name;
+for(const piece of Object.keys(PIECES) as Piece[]){
+  const detail=pieceSpec(piece);
+  const b=document.createElement('button');
+  b.innerHTML='<span class="piece-icon">'+(detail.code??detail.icon)+'</span>'+detail.name;
   b.addEventListener('click',()=>{
     if(draft.layout.length>=28)return;
     selected=draft.layout.length;
@@ -339,6 +396,7 @@ let last=performance.now(), accumulator=0;
 function loop(now:number){
   const dt=clamp((now-last)/1000,0,0.12);last=now;
   if(screen==='race'&&race){
+    if(stickLane&&now>=laneRepeat){race.moveLane(stickLane);laneRepeat=now+215;}
     accumulator+=dt;
     while(accumulator>=DT){race.step(DT);accumulator-=DT;}
     hud(race);

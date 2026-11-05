@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#162229">
+<meta name="theme-color" content="#ba202b">
 <meta name="description" content="Voxel Bikes is an offline-ready arcade motocross racer with time trials, rival races, and a track builder.">
-<title>Voxel Bikes · Dirt Circuit</title>
+<title>Voxel Bikes · Redline Series</title>
 <style>/* STYLE */</style>
 </head>
 <body>
@@ -13,22 +13,23 @@
 <div id="vignette"></div>
 <main id="ui">
   <section id="home" class="screen home">
-    <div class="menu-content">
-      <div class="eyebrow"><span class="check"></span> DIRT CIRCUIT <span class="slash">/</span> VOL. 01</div>
-      <h1><span>VOXEL</span><span>BIKES<span class="dot">.</span></span></h1>
-      <div class="menu-actions">
-        <button data-mode="trial" class="menu-button primary"><span class="num">01</span> Time Trial <span class="chev">↗</span></button>
-        <button data-mode="rival" class="menu-button"><span class="num">02</span> Rival Race <span class="chev">↗</span></button>
-        <button id="builderButton" class="menu-button"><span class="num">03</span> Track Builder <span class="chev">↗</span></button>
-      </div>
-      <div class="small-actions"><button id="settingsButton" class="text-button">Settings</button><button id="offline" class="text-button">Offline HTML ↓</button></div>
+    <div class="title-plate">
+      <div class="eyebrow"><span class="check"></span> REDLINE SERIES <span class="slash">/</span> 02</div>
+      <h1>VOXEL<span>BIKES</span></h1>
     </div>
-    <div class="scene-mark"><span class="check"></span><span>01<br><b>CLAY CIRCUIT</b></span></div>
+    <div class="race-number" aria-hidden="true">02</div>
+    <nav class="pit-board" aria-label="Main menu">
+      <button data-mode="trial" class="pit-button"><span>01</span> Time Trial</button>
+      <button data-mode="rival" class="pit-button"><span>02</span> Rival Race</button>
+      <button id="builderButton" class="pit-button"><span>03</span> Track Builder</button>
+      <button id="settingsButton" class="pit-icon" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></button>
+      <button id="offline" class="pit-icon" aria-label="Download offline HTML"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4"/></svg></button>
+    </nav>
   </section>
 
   <section id="select" class="screen overlay" hidden>
     <div class="panel select-panel">
-      <div class="eyebrow">Dirt Circuit / Course Select</div><h2 id="modeTitle">Time Trial</h2>
+      <div class="eyebrow">Redline Series / Course Select</div><h2 id="modeTitle">Time Trial</h2>
       <div id="courses" class="cards"></div>
       <button class="text-button" data-home>← Main menu</button>
     </div>
@@ -39,6 +40,7 @@
       <div class="eyebrow">Pit Lane</div><h2>Settings</h2>
       <label class="setting">Engine &amp; race audio <input type="checkbox" id="sound" checked></label>
       <label class="setting">High-resolution rendering <input type="checkbox" id="quality" checked></label>
+      <p class="touch-help">Touch stick ↑ ↓ changes lanes. Pull left to lift the nose, right to lower it. The gauge is throttle and the bolt is turbo.</p>
       <dl class="keylist"><div><dt>Lane</dt><dd>↑ / ↓</dd></div><div><dt>Pitch</dt><dd>← / →</dd></div><div><dt>Throttle</dt><dd>Z</dd></div><div><dt>Turbo</dt><dd>X</dd></div><div><dt>Pause</dt><dd>Esc</dd></div></dl>
       <button class="text-button" data-home>← Main menu</button>
     </div>
@@ -49,7 +51,7 @@
       <div class="eyebrow">Workshop / Course Editor</div><h2>Track Builder</h2>
       <div class="builder-options">
         <input id="trackName" maxlength="36" aria-label="Track name" value="My Track">
-        <select id="theme" aria-label="Track setting"><option value="0">Clay arena</option><option value="1">Quarry</option><option value="2">Mud fair</option></select>
+        <select id="theme" aria-label="Track setting"><option value="0">Clay arena</option><option value="1">Quarry</option><option value="2">Mud fair</option><option value="3">Foundry</option><option value="4">White ridge</option></select>
       </div>
       <div id="palette" class="palette" aria-label="Track pieces"></div>
       <div id="layout" class="layout" aria-label="Track layout"></div>
@@ -70,19 +72,17 @@
   <section id="race" class="screen" hidden>
     <div class="hud">
       <div class="hud-chip"><small id="timeLabel">TIME</small><strong id="time">00:00.00</strong></div>
-      <div class="hud-middle"><div class="course-label" id="courseLabel"></div><div class="course-progress" role="progressbar" aria-label="Course progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div></div>
+      <div class="hud-middle"><div class="course-label"><span id="courseLabel"></span><span id="lap"></span></div><div class="course-progress" role="progressbar" aria-label="Course progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div></div>
       <div class="hud-right">
         <div class="hud-chip heat-chip"><small>ENGINE HEAT</small><div class="heat" role="meter" aria-label="Engine heat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="heat"></i></div></div>
-        <button id="pauseButton" class="square" aria-label="Pause">Ⅱ</button>
+        <button id="pauseButton" class="square" aria-label="Pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5v14m6-14v14"/></svg></button>
       </div>
     </div>
     <div id="countdown" class="countdown"></div><div id="feedback" class="feedback" hidden></div>
     <div class="touch">
-      <div class="dpad">
-        <button class="up" data-action="up" aria-label="Lane up">▲</button>
-        <button class="down" data-action="down" aria-label="Lane down">▼</button>
-        <button class="left" data-action="back" aria-label="Nose up">◀</button>
-        <button class="right" data-action="forward" aria-label="Nose down">▶</button>
+      <div id="joystick" class="joystick" aria-label="Touch joystick" role="group">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><path d="m46 13 4-4 4 4m-8 74 4 4 4-4M13 46l-4 4 4 4m74-8 4 4-4 4"/></svg>
+        <div id="stickThumb"></div>
       </div>
       <div class="pedals">
         <button class="gas" data-action="gas" aria-label="Throttle"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 22a11 11 0 1 1 20 0M16 17l6-7M8 17h2m12 0h2M16 8v2"/><circle cx="16" cy="17" r="2"/></svg></button>

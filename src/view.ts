@@ -1,12 +1,15 @@
 import * as T from 'three';
-import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT } from './race';
+import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, CrashKind } from './race';
 const PALETTES = [
-  { sky:0x79c1c6, fog:0x9fcbd0, dirt:0xb97449, soil:0x875139, grass:0x646f47, rock:0xa78b65, far:0x749995, trim:0xffd166, sun:0xffdd9d },
-  { sky:0x9eaac8, fog:0xb0a9c1, dirt:0x9d704e, soil:0x63525b, grass:0x6d6578, rock:0x8a7886, far:0x7b7e9c, trim:0xffba56, sun:0xffba83 },
-  { sky:0x385676, fog:0x55718a, dirt:0x856854, soil:0x564d52, grass:0x4d6258, rock:0x657b80, far:0x466581, trim:0xfbac79, sun:0xbdd9e5 },
+  { sky:0x79c1c6, fog:0x9fcbd0, dirt:0xb97449, soil:0x875139, grass:0x646f47, rock:0xa78b65, far:0x749995, trim:0xf3ddd2, sun:0xffdd9d },
+  { sky:0x9eaac8, fog:0xb0a9c1, dirt:0x9d704e, soil:0x63525b, grass:0x6d6578, rock:0x8a7886, far:0x7b7e9c, trim:0xebc8b9, sun:0xffba83 },
+  { sky:0x385676, fog:0x55718a, dirt:0x856854, soil:0x564d52, grass:0x4d6258, rock:0x657b80, far:0x466581, trim:0xecc8bc, sun:0xbdd9e5 },
+  { sky:0xcb9c87, fog:0xc79784, dirt:0x996052, soil:0x703d39, grass:0x655450, rock:0x9a6960, far:0x925d5b, trim:0xffe5cf, sun:0xffbb88 },
+  { sky:0xa0bed7, fog:0xc1c9ce, dirt:0xb48e73, soil:0x8d6d5b, grass:0x88877f, rock:0xd1c5b7, far:0xb1a7a7, trim:0xffeee0, sun:0xffdbb0 },
 ];
 const cube = new T.BoxGeometry(1,1,1);
 const tyre = new T.CylinderGeometry(0.54,0.54,0.33,12).rotateX(Math.PI/2);
+const depthStops=[-WIDTH/2,-3.6,-2.4,-1.2,-0.58,-0.22,0,0.22,0.58,1.2,2.4,3.6,WIDTH/2];
 const rim = new T.CylinderGeometry(0.34,0.34,0.36,10).rotateX(Math.PI/2);
 const circle = new T.CircleGeometry(1,18).rotateX(-Math.PI/2);
 const materials = new Map<string,T.MeshStandardMaterial>();
@@ -58,6 +61,16 @@ function makeRider(scene:T.Scene,color:number,ghost=false):RiderView {
   p(ink,0.30,1.49,0,0.20,0.18,0.56);
   p(white,0.38,1.61,0,0.23,0.07,0.55);
   p(color,0.24,1.31,0,0.32,0.13,0.46);
+  p(white,-0.04,1.737,0,0.14,0.07,0.57);
+  p(white,-0.12,1.47,0,0.09,0.37,0.57);
+  for(const z of [-0.306,0.306]){
+    b(white,-0.51,0.29,z,0.48,0.29,0.035);
+    for(const [x,y,w,h] of [[-0.59,0.30,0.034,0.145],[-0.52,0.30,0.034,0.145],[-0.555,0.375,0.10,0.029],
+      [-0.555,0.225,0.10,0.029],[-0.43,0.375,0.105,0.029],[-0.414,0.308,0.035,0.15]]){
+      b(ink,x,y,z*1.08,w,h,0.016);
+    }
+  }
+  b(white,0.47,0.48,0,0.07,0.19,0.65);
   const wheels=[-0.91,0.89].map(x=>{
     const wheel=new T.Group(); wheel.position.set(x,-0.18,0); body.add(wheel);
     wheel.add(new T.Mesh(tyre,mat(ink,ghost)),new T.Mesh(rim,mat(silver,ghost)));
@@ -84,10 +97,14 @@ function batch(scene:T.Object3D,blocks:Block[]) {
   });
   mesh.computeBoundingSphere(); scene.add(mesh);
 }
+const neutral=new T.Quaternion();
+function trackHeightOffset(track:Track,bike:Bike,dx:number,dz:number) {
+  return track.height(bike.x+dx,clamp(bike.z+dz,-4.6,4.6))-track.height(bike.x,bike.z);
+}
 function seeded(seed:number) {return () => {seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};}
 export class View {
   private scene = new T.Scene();
-  private camera = new T.OrthographicCamera();
+  private camera = new T.PerspectiveCamera(33,1,0.15,170);
   private renderer: T.WebGLRenderer;
   private world=new T.Group();
   private riders:RiderView[]=[];
@@ -96,6 +113,7 @@ export class View {
   private track!:Track;
   private targetX=0;
   private targetY=0;
+  private targetZ=0;
   private elapsed=0;
   private lastDust=0;
   private width=0;
@@ -119,7 +137,7 @@ export class View {
       r.shadow.material.dispose();
     }
     this.riders=[];
-    this.particles=[];this.targetX=5;this.targetY=0;
+    this.particles=[];this.targetX=5.7;this.targetY=0;this.targetZ=1.2;
     const palette=PALETTES[track.course.theme];
     this.scene.background=new T.Color(palette.sky);this.scene.fog=new T.Fog(palette.fog,30,125);
     const rng=seeded(632+track.course.theme);
@@ -132,20 +150,20 @@ export class View {
       const breaks=[start,stop];
       for(let x=start+1.3;x<stop;x+=1.3) breaks.push(x);
       for(const s of track.segments) {
-        const shapeLength = s.piece==='straight'||s.piece==='mud'||s.piece==='cool' ? 1 : 6;
-        const points=[s.x+1.4,s.end-1.4];
-        for(let i=0;i<=shapeLength;i++) points.push(blend(s.x,s.end,i/shapeLength));
-        breaks.push(...points.filter(x=>x>start&&x<stop));
+        if(s.end<start||s.x>stop)continue;
+        breaks.push(...track.boundaries(s).filter(x=>x>start&&x<stop));
       }
       breaks.sort((a,b)=>a-b);
       function vertex(x:number,y:number,z:number) { vertices.push(x,y,z);colors.push(color.r,color.g,color.b); }
       for(let i=0;i<breaks.length-1;i++){
         const a=breaks[i],b=breaks[i+1];
         if(b-a<0.0001) continue;
-        for(let j=0;j<8;j++){
-          const z0=-WIDTH/2+j*1.2,z1=z0+1.2,z=(z0+z1)/2;
+        for(let j=0;j<depthStops.length-1;j++){
+          const z0=depthStops[j],z1=depthStops[j+1],z=(z0+z1)/2;
           const surface=track.surface((a+b)/2,z);
-          color.setHex(surface==='mud'?0x594035:surface==='cool'?0x30877e:palette.dirt)
+          const paint=surface==='mud'?0x614235:surface==='cool'?0x267d76:surface==='rough'?0x697158:
+            surface==='trap'?0x644d45:surface==='bump'?(j%2?0xe6d8c6:0xb42639):palette.dirt;
+          color.setHex(paint)
             .multiplyScalar((j%2?1:0.97)*(0.92+rng()*0.14));
           vertex(a,track.height(a,z0),z0);vertex(a,track.height(a,z1),z1);vertex(b,track.height(b,z0),z0);
           vertex(a,track.height(a,z1),z1);vertex(b,track.height(b,z1),z1);vertex(b,track.height(b,z0),z0);
@@ -161,18 +179,23 @@ export class View {
           const top=track.height(x,sign*4.8);
           block(x,top/2-0.49,sign*5.05,1.94,top+0.99,0.62,palette.soil);
           block(x,top*0.31-0.5,sign*5.52,1.97,top*0.62+0.96,0.34,palette.rock);
-          block(x,top+0.035,sign*4.81,1.2,0.085,0.18,Math.floor(x/1.9)%2?palette.trim:0x5b403b);
+          block(x,top+0.035,sign*4.81,1.2,0.085,0.18,Math.floor(x/1.9)%2?palette.trim:0xb42332);
         }
         for(let l=0;l<4;l++){
           const z=LANES[l];
           const s=track.surface(x,z);
           if(s==='cool'){
             for(const dir of [-1,1]) {
-              const mark:[number,number,number,number,number,number,number]=[x,0.045,z+dir*0.21,0.48,0.04,0.17,0xa3ffda];
-              blocks.push(mark,[x+0.26,0.045,z+dir*0.08,0.19,0.04,0.18,0xa3ffda]);
+              block(x,track.height(x,z)+0.045,z+dir*0.21,0.48,0.04,0.17,0xa3ffda);
+              block(x+0.26,track.height(x+0.26,z)+0.045,z+dir*0.08,0.19,0.04,0.18,0xa3ffda);
             }
-          } else if(s==='mud'){
-            block(x+rng()*0.6,0.022,z+(rng()-0.5)*1.6,0.55+rng()*0.8,0.047,0.13+rng()*0.2,0x4a352e);
+          } else if(s==='mud'||s==='rough'||s==='trap'){
+            const h=track.height(x,z);
+            if(s==='trap') {
+              for(let k=0;k<4;k++) block(x+(rng()-0.5)*0.8,h+0.075,z+(rng()-0.5)*1.2,0.32+rng()*0.28,0.14+rng()*0.14,0.26+rng()*0.28, k%2?0x584338:0x846858);
+            } else {
+              block(x+rng()*0.55,h+0.022,z+(rng()-0.5)*1.6,0.55+rng()*0.8,0.047,0.13+rng()*0.2,s==='mud'?0x4a352e:0x879070);
+            }
           } else if(rng()<0.34) {
             const dz=(rng()-0.5)*1.7;
             block(x,track.height(x,z+dz)+0.017,z+dz,0.23+rng()*0.55,0.042,0.1,0xa26a49);
@@ -193,7 +216,7 @@ export class View {
         const high=5+rng()*8;
         for(let layer=0;layer<4;layer++){
           block(x+rng()*4,high*layer*0.25-1.0,-27-rng()*5,10+rng()*10-layer,high*0.53,10-layer*0.7,palette.far);
-          if(track.course.theme===1) block(x+1,layer*1.13-0.3,-15-layer*1.5,9+rng()*3-layer,1.24,3.3,palette.rock);
+          if(track.course.theme===1||track.course.theme===4) block(x+1,layer*1.13-0.3,-15-layer*1.5,9+rng()*3-layer,1.24,3.3,palette.rock);
         }
         if(track.course.theme===0 && (x<10 || Math.floor(x/28)%3!==0)){
           for(let row=0;row<4;row++){
@@ -206,6 +229,17 @@ export class View {
             }
           }
         }
+        if(track.course.theme===3){
+          block(x,1.8,-14,7.7,5.3,4.7,0x762938);
+          block(x,4.47,-14,8.1,0.34,5,0xe5b6a4);
+          block(x,1.95,-11.55,5.5,2.7,0.16,0x4a3036);
+          for(const dx of [-3.5,-1.65,1.65,3.5])block(x+dx,3.2,-11.34,0.22,7.9,0.26,0xb64145);
+          block(x,6.73,-13.2,7.8,0.28,0.34,0xe6b4a0);
+        }
+        if(track.course.theme===4){
+          block(x,0.65,-9.3,3.5,0.19,1.6,0xf3dfcb);
+          for(let j=0;j<5;j++)block(x+j*0.54,0.65+j*0.46,-17,3.3-j*0.29,0.82+j*0.65,2.2, j%2?0xe1d5c3:0xb5a8a1);
+        }
         if(track.course.theme===2){
           const tent=[0xa05265,0xe6a667,0x467789][Math.floor(rng()*3)];
           block(x,0.51,-14,5.4,2.25,3.6,tent);
@@ -213,7 +247,7 @@ export class View {
           block(x,0.16,-12.16,1.6,1.63,0.14,0xffd386);
         }
         if(track.course.theme===0 && rng()<0.64){
-          const flag=[0xe99359,0xf9cb72,0x76b9a6][Math.floor(rng()*3)];
+          const flag=[0xc83242,0xf5e3d3,0xa72f38][Math.floor(rng()*3)];
           block(x,2.65,-8.35,0.105,5.45,0.1,0x5c6057);
           for(let j=0;j<3;j++)block(x+0.29+j*0.31,4.86+j*0.035,-8.35,0.34,0.74-j*0.19,0.105,flag);
         }
@@ -231,8 +265,8 @@ export class View {
       batch(this.world,blocks);
     }
     meshMaterial.dispose();
-    this.banner(9,0,'VOXEL BIKES',palette.trim);
-    this.banner(track.end,0,'FINISH',palette.trim);
+    this.banner(11,0,'VOXEL BIKES',palette.trim);
+    for(const [index,x] of track.markers.entries())this.banner(x,0,index+1===track.laps?'FINISH':'LAP 2',palette.trim);
     for(let x=66;x<track.end;x+=95) this.sign(x,x%2?'MX / 04':'DIRT CLUB',palette.trim);
     const cloudBlocks:Block[]=[];
     for(let x=-50;x<track.end+80;x+=33) {
@@ -243,27 +277,25 @@ export class View {
   }
   private label(text:string,accent:number) {
     const canvas=document.createElement('canvas');canvas.width=512;canvas.height=96;
-    const ctx=canvas.getContext('2d')!;ctx.fillStyle='#17242c';ctx.fillRect(0,0,512,96);
+    const ctx=canvas.getContext('2d')!;ctx.fillStyle='#9f2032';ctx.fillRect(0,0,512,96);
     ctx.fillStyle='#'+accent.toString(16).padStart(6,'0');ctx.fillRect(0,0,512,7);ctx.fillRect(0,89,512,7);
     for(let i=0;i<4;i++)for(let j=0;j<4;j++)if((i+j)%2===0){ctx.fillRect(20+i*9,30+j*9,9,9);ctx.fillRect(456+i*9,30+j*9,9,9);}
-    ctx.font='900 49px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff4d6';ctx.fillText(text,256,49,365);
+    ctx.font='900 49px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff1e4';ctx.fillText(text,256,49,365);
     const texture=new T.CanvasTexture(canvas);texture.colorSpace=T.SRGBColorSpace;
     return new T.MeshBasicMaterial({map:texture,side:T.DoubleSide});
   }
   private banner(x:number,y:number,text:string,accent:number) {
     const blocks:Block[]=[];
-    for(const z of [-5.4,5.4]) {
-      for(let j=0;j<6;j++)blocks.push([x,y+0.32+j*0.64,z,0.39,0.64,0.42,j%2?0x23333b:accent]);
-    }
-    blocks.push([x,y+3.78,0,0.33,0.46,11.2,0x1e2a30]);
+    for(let j=0;j<8;j++)blocks.push([x,y+0.32+j*0.64,-5.4,0.39,0.64,0.42,j%2?0xb42334:accent]);
+    blocks.push([x,y+5.06,-0.2,0.33,0.38,10.4,0xb42334]);
     batch(this.world,blocks);
     const label=new T.Mesh(new T.PlaneGeometry(8.5,1.6),this.label(text,accent));
-    label.rotation.y=Math.PI/2;label.position.set(x-0.22,y+4.05,0);
+    label.rotation.y=Math.PI/2;label.position.set(x-0.22,y+5.55,0);
     // A second board faces the side-on race camera.
     const side=new T.Mesh(new T.PlaneGeometry(4.8,0.9),label.material.clone());
-    side.position.set(x,y+4.05,5.43);
+    side.position.set(x,y+5.55,-4.35);
     this.world.add(label,side);
-    if(text==='FINISH'){
+    if(text!=='VOXEL BIKES'){
       const line:Block[]=[];
       for(let i=0;i<16;i++)for(let j=0;j<2;j++)line.push([x+j*0.34,0.018,-4.5+i*0.6,0.34,0.038,0.60,(i+j)%2?0x303235:0xf3e1be]);
       batch(this.world,line);
@@ -280,21 +312,20 @@ export class View {
     const pixelRatio=Math.min(this.quality?1.65:1,devicePixelRatio);
     if(w!==this.width||h!==this.height||pixelRatio!==this.renderer.getPixelRatio()){
       this.width=w;this.height=h;this.renderer.setPixelRatio(pixelRatio);this.renderer.setSize(w,h,false);
-      const width=Math.max(29,17*w/h),height=width*h/w;
-      this.camera.left=-width/2;this.camera.right=width/2;
-      this.camera.top=height/2;this.camera.bottom=-height/2;
-      this.camera.near=0.1;this.camera.far=180;this.camera.updateProjectionMatrix();
+      this.camera.aspect=w/h;
+      this.camera.updateProjectionMatrix();
     }
     this.elapsed+=dt;
     let bikes:Bike[];
     if(race)bikes=[race.rider,...race.rivals];
     else{
-      const demoX=attract?7+Math.sin(this.elapsed*0.38)*1.35:8;
-      bikes=[{x:demoX,y:0.72,z:1.2,pitch:0.025*Math.sin(this.elapsed*3),spin:0,crash:0,air:false,impact:0,speed:0,lane:2,vy:0,heat:0,hot:false,finish:0,recovering:0}];
+      const demoX=7.5;
+      bikes=[{x:demoX,y:0.80,z:1.2,pitch:0.11+0.012*Math.sin(this.elapsed*3),spin:0,crash:0,air:false,impact:0,speed:0,
+        lane:2,vy:0,heat:0,hot:false,finish:0,recovering:0,wheelie:0.11,lean:-0.08,side:1,crashKind:CrashKind.None,bumpHit:false}];
     }
     const r=bikes[0];
     const n=bikes.length;
-    while(this.riders.length<n) this.riders.push(makeRider(this.scene,[0xef694b,0x56bcb6,0xffc35d,0x8c91e8][this.riders.length]));
+    while(this.riders.length<n) this.riders.push(makeRider(this.scene,[0xd32a3c,0x56bcb6,0xffc35d,0x8c91e8][this.riders.length]));
     const ghost=race?.ghost;
     if(ghost&&this.riders.length===n)this.riders.push(makeRider(this.scene,0xbafcf2,true));
     const showGhost=ghost && race.time>=0 && race.time<=ghost.time;
@@ -303,7 +334,8 @@ export class View {
       const a=ghost.frames[i],b=ghost.frames[Math.min(i+1,ghost.frames.length-1)];
       const t=clamp((race.time-a[0])/Math.max(0.001,b[0]-a[0]),0,1);
       bikes.push({...r,x:blend(a[1],b[1],t),y:blend(a[2],b[2],t),z:blend(a[3],b[3],t),
-        pitch:blend(a[4],b[4],t),spin:blend(a[5],b[5],t),impact:0,crash:0});
+        pitch:blend(a[4],b[4],t),spin:blend(a[5],b[5],t),impact:0,
+        crash:a[7]===b[7]?blend(a[6],b[6],t):a[6],crashKind:a[7],lean:blend(a[8],b[8],t),side:a[9]});
     }
     this.riders.forEach((view,i)=>{
       const bike=bikes[i];
@@ -312,10 +344,33 @@ export class View {
       if(!bike)return;
       const ground=this.track.height(bike.x,bike.z);
       view.root.position.set(bike.x,bike.y,bike.z);
-      view.body.rotation.z=bike.crash?bike.pitch-(1-bike.crash/1.04)*1.15:bike.pitch;
-      view.body.rotation.x=bike.crash?Math.sin((1-bike.crash/1.04)*Math.PI*0.75)*1.4:0;
-      view.person.rotation.z=-bike.impact*0.22+Math.sin(this.elapsed*18)*Math.min(0.025,bike.speed/900);
-      view.person.position.y=-bike.impact*0.15;
+      view.body.rotation.set(bike.lean,0,bike.pitch);
+      view.person.position.set(0,-bike.impact*0.13,0);
+      view.person.rotation.set(0,0,-bike.impact*0.17-bike.wheelie*0.14+
+        Math.sin(this.elapsed*18)*Math.min(0.025,bike.speed/900));
+      if(bike.crash){
+        const age=CRASH_TIME-bike.crash, tumble=clamp(age/0.68,0,1);
+        const back=bike.crashKind===CrashKind.Back, side=bike.crashKind===CrashKind.Side;
+        const direction=back?-1:1, recover=clamp((age-0.85)/(CRASH_TIME-0.85),0,1);
+        const settle=recover*recover*(3-2*recover);
+        const kick=Math.sin(tumble*Math.PI)*0.54;
+        view.root.position.y=ground+blend(0.63-kick*0.25,0.72,settle);
+        view.body.rotation.x=blend((side?bike.side:-0.64)*Math.min(1,tumble*2)*1.46,0,settle);
+        view.body.rotation.z=blend(bike.pitch+(side?0.12:-direction*1.45)*Math.min(1,tumble*1.65),
+          this.track.slope(bike.x,bike.z),settle);
+        const travel=1-Math.exp(-5.7*age);
+        const riderX=(side?0.46:direction*2.2)*travel;
+        const riderZ=(side?bike.side*1.35:bike.side*0.69)*travel;
+        // Counter the chassis rotation so the rider tumbles and then remounts on a separate arc.
+        view.person.rotation.set(0,0,0);
+        const relative=new T.Vector3(riderX,trackHeightOffset(this.track,bike,riderX,riderZ)-0.37+kick,riderZ);
+        relative.applyQuaternion(view.body.quaternion.clone().invert()).multiplyScalar(1-settle);
+        relative.y+=0.24*Math.sin(settle*Math.PI);
+        view.person.position.copy(relative);
+        const riderAngle=side?0.41:-direction*2.9*tumble;
+        const pose=new T.Quaternion().setFromEuler(new T.Euler((side?bike.side:-0.55)*1.18*tumble,0,riderAngle));
+        view.person.quaternion.copy(view.body.quaternion.clone().invert().multiply(pose)).slerp(neutral,settle);
+      }
       view.fork.scale.y=0.14-bike.impact*0.026;
       view.wheels.forEach(w=>{w.rotation.z=bike.spin;w.position.y=-0.18+bike.impact*0.08;});
       view.shadow.position.set(bike.x,ground+0.029,bike.z);
@@ -324,8 +379,10 @@ export class View {
     if(race&&race.time>0&&!race.done&&this.elapsed-this.lastDust>0.034){
       this.lastDust=this.elapsed;
       for(const bike of bikes.slice(0,n)){
-        if(bike.air||bike.speed<4||this.particles.length>=84)continue;
-        const mud=this.track.surface(bike.x,bike.z)==='mud';
+        if(bike.air||(!bike.crash&&bike.speed<4)||this.particles.length>=84)continue;
+        if(bike.crash && bike.crash<0.93)continue;
+        const surface=this.track.surface(bike.x,bike.z);
+        const mud=surface==='mud'||surface==='trap';
         this.particles.push({x:bike.x-0.92,y:bike.y-0.5,z:bike.z+(Math.random()-0.5)*0.49,life:0.45,size:0.12+Math.random()*0.18,color:mud?0x785847:0xcd9b73});
       }
     }
@@ -339,11 +396,24 @@ export class View {
     });
     this.dust.instanceMatrix.needsUpdate=true;
     if(this.dust.instanceColor)this.dust.instanceColor.needsUpdate=true;
-    const cameraLead=attract?-3.6:6.5+r.speed*0.065;
-    this.targetX=blend(this.targetX,r.x+cameraLead,1-Math.exp(-dt*(attract?3:13)));
-    this.targetY=blend(this.targetY,this.track.height(r.x,r.z)*0.33,1-Math.exp(-dt*4.2));
-    this.camera.position.set(this.targetX-6.8,this.targetY+11.0,24.4);
-    this.camera.lookAt(this.targetX,this.targetY+1.85,-1.8);
+    const portrait=this.camera.aspect<1;
+    if(attract){
+      this.camera.fov=portrait?46:37;
+      this.camera.position.set(r.x+3.8+Math.sin(this.elapsed*0.48)*0.12,1.04,r.z+(portrait?6.1:5.2));
+      this.camera.lookAt(r.x-(portrait?0.20:2.12),1.56,r.z-0.14);
+    }else{
+      this.camera.fov=portrait?44:33;
+      const lead=r.crashKind===CrashKind.Back?3.8:5.0;
+      this.targetX=blend(this.targetX,r.x+lead,1-Math.exp(-dt*11));
+      const ground=this.track.height(r.x,r.z);
+      const nearEdge=this.track.height(r.x-2,4.7);
+      this.targetY=blend(this.targetY,Math.max(ground,nearEdge*0.79)+Math.max(0,r.y-ground-0.72)*0.38,1-Math.exp(-dt*8));
+      this.targetZ=blend(this.targetZ,r.z,1-Math.exp(-dt*6));
+      const depth=Math.max(14.9,23/this.camera.aspect);
+      this.camera.position.set(this.targetX-7.2,this.targetY+1.88,this.targetZ+depth);
+      this.camera.lookAt(this.targetX+0.25,this.targetY+2.12,this.targetZ-0.4);
+    }
+    this.camera.updateProjectionMatrix();
     this.renderer.render(this.scene,this.camera);
   }
 }
