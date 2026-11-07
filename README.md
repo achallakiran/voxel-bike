@@ -17,7 +17,9 @@ Light and weather default to Random. New races and Next Track resolve them indep
 
 Time Trial saves a ghost for matching track, laps, conditions, bike and upgrade configuration. Handling changes in v0.9 use a new record namespace; old records remain stored but are not compared against new physics. Paint does not separate records. Existing credits, ownership and upgrades are preserved. Practice loops indefinitely without credit farming.
 
-Audio includes offline synthesized vocal ensembles, applause, whistles, gasps and distance-faded stand ambience, with independent audience volume. Night uses a headlight; rain affects traction and braking. All gameplay assets and audio work without a network connection.
+Audio includes stronger offline vocal ensembles, applause, whistles, gasps and distance-faded stand ambience, with independent audience volume and a limiter. Spectators wave cheering placards and react with larger, longer gestures. The finish screen has a live voxel podium with celebrating riders, a trophy, confetti, cheering spectators and sustained applause. Reduced motion disables confetti and camera motion. Night uses a headlight; rain affects traction and braking. All gameplay assets and audio work without a network connection.
+
+Races stop immediately when the player finishes. The Rival podium includes the top three racers; unfinished opponents are classified by their progress at that moment, without invented finish times. A fourth-place player stands beside the podium. Time Trial celebrates the current run against saved matching times. Next Track, Race Again and Main Menu remain visible without scrolling.
 
 ## Build
 

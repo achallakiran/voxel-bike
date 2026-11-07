@@ -3,7 +3,7 @@ import * as T from 'three';
 import {DEFAULT_CONDITIONS, wetness, type Conditions} from './conditions';
 import {RaceEffects} from './race-effects';
 import {RiderVisibility} from './visibility';
-import { LANES, WIDTH, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, RECORDED_CRASH_TIME, CrashKind, type CrowdKind } from './race';
+import { LANES, WIDTH, COURSES, Track, Race, Bike, blend, clamp, DT, CRASH_TIME, RECORDED_CRASH_TIME, CrashKind, type CrowdKind } from './race';
 const PALETTES = [
   { sky:0x79c1c6, fog:0x9fcbd0, dirt:0xb97449, soil:0x875139, grass:0x646f47, rock:0xa78b65, far:0x749995, trim:0xf3ddd2, sun:0xffdd9d },
   { sky:0x9eaac8, fog:0xb0a9c1, dirt:0x9d704e, soil:0x63525b, grass:0x6d6578, rock:0x8a7886, far:0x7b7e9c, trim:0xebc8b9, sun:0xffba83 },
@@ -342,11 +342,21 @@ class TitleTrack {
     renderer.render(this.scene,this.camera);
   }
 }
+const placardMaterials=new Map<string,T.MeshStandardMaterial>();
+function placardMaterial(label:string,color:string){
+  const key=label+color;if(placardMaterials.has(key))return placardMaterials.get(key)!;
+  const canvas=document.createElement('canvas');canvas.width=256;canvas.height=128;const ctx=canvas.getContext('2d')!;
+  ctx.fillStyle=color;ctx.fillRect(0,0,256,128);ctx.strokeStyle='#fff1db';ctx.lineWidth=10;ctx.strokeRect(6,6,244,116);
+  ctx.fillStyle='#fff1db';ctx.font='900 68px sans-serif';ctx.textAlign='center';ctx.fillText(label,128,88);
+  const texture=new T.CanvasTexture(canvas);texture.colorSpace=T.SRGBColorSpace;
+  const material=new T.MeshStandardMaterial({map:texture,roughness:0.9,emissive:0x38202b,emissiveIntensity:0.4});placardMaterials.set(key,material);return material;
+}
 class RaceCrowd {
   readonly group=new T.Group();
   private readonly actors:T.InstancedMesh;
   private readonly fans:{x:number;y:number;z:number;phase:number;color:number;skin:number}[]=[];
   private readonly pose=new T.Object3D();
+  private signs:{mesh:T.Group;fan:number}[]=[];
   private response=0;
   private mood:CrowdKind='landing';
   constructor(readonly distance:number,track:Track,rng:()=>number){
@@ -372,12 +382,19 @@ class RaceCrowd {
     });
     this.actors.frustumCulled=false;
     this.group.add(this.actors);
+    this.fans.forEach((fan,i)=>{
+      if(i%6!==1)return;
+      const sign=new T.Group();const pole=box(sign,0xbfa078,0,-0.30,0,0.045,0.65,0.045);
+      const board=box(sign,0xffffff,0,0.10,0,1.05,0.53,0.055);
+      board.material=placardMaterial(['GO!','RIDE!','01','GO!'][Math.floor(i/6)%4],i%2?'#bd3048':'#426e7e');
+      this.group.add(sign);this.signs.push({mesh:sign,fan:i});
+    });
     this.update(0,0,0,true);
   }
   react(kind:CrowdKind,strength:number){
     if(this.mood==='finish'&&kind!=='finish'&&this.response>0.3)return;
     this.mood=kind;
-    this.response=Math.max(this.response*0.48,strength);
+    this.response=Math.max(this.response*0.48,Math.min(1.8,strength*1.5));
   }
   private part(i:number,x:number,y:number,z:number,w:number,h:number,d:number,tilt=0,roll=0){
     this.pose.position.set(x,y,z);this.pose.scale.set(w,h,d);
@@ -385,13 +402,13 @@ class RaceCrowd {
     this.actors.setMatrixAt(i,this.pose.matrix);
   }
   update(time:number,dt:number,near:number,visible:boolean){
-    this.response=Math.max(0,this.response-dt*(this.mood==='gasp'?1.1:this.mood==='pass'?0.86:0.52));
+    this.response=Math.max(0,this.response-dt*(this.mood==='gasp'?1.1:this.mood==='pass'?0.42:0.30));
     if(!visible)return;
     const cheer=this.mood==='gasp'?0:this.response,gasp=this.mood==='gasp'?this.response:0;
     this.fans.forEach((fan,i)=>{
       const beat=Math.sin(time*7+fan.phase), bounce=Math.max(0,beat);
       const wave=this.mood==='pass'?Math.max(0,Math.sin(time*8-fan.x*0.7)):1;
-      const amplitude=this.mood==='lap'||this.mood==='finish'?1.2:1;
+      const amplitude=this.mood==='lap'||this.mood==='finish'?1.45:1.15;
       const rise=near*(0.07+bounce*0.17)+cheer*wave*amplitude*(0.48+bounce*0.33)-gasp*0.19;
       const y=fan.y+rise,z=fan.z-gasp*0.30;
       this.part(i*5,fan.x,y,z,0.43,0.50,0.42,-gasp*0.41);
@@ -404,6 +421,11 @@ class RaceCrowd {
           0.14,0.55,0.15,gasp*1.17,side*(0.25+lift*0.38));
       }
     });
+    for(const {mesh,fan:index} of this.signs){
+      const fan=this.fans[index],wave=Math.sin(time*7+fan.phase);
+      mesh.position.set(fan.x,fan.y+1.05+cheer*0.22+(near+cheer)*Math.max(0,wave)*0.16,fan.z+0.33);
+      mesh.rotation.set(gasp*0.45,Math.sin(time*2+index)*0.12,wave*(0.05+cheer*0.08));
+    }
     this.actors.instanceMatrix.needsUpdate=true;
   }
 }
@@ -437,7 +459,78 @@ class Showroom {
     renderer.render(this.scene,this.camera);
   }
 }
+export interface Celebrant {label:string;color:number;rank:number;current:boolean;design:BikeId}
+class PodiumScene {
+  readonly scene=new T.Scene();
+  private camera=new T.PerspectiveCamera(35,1,0.1,45);
+  private people:{model:RiderView;rank:number;trophy?:T.Group}[]=[];
+  private group=new T.Group();
+  private crowd:RaceCrowd;
+  private clock=0;
+  private confetti:T.InstancedMesh;
+  private marker=new T.Object3D();
+  private textures:T.CanvasTexture[]=[];
+  constructor(){
+    this.scene.background=new T.Color(0x24151d);
+    this.scene.add(new T.HemisphereLight(0xffedd7,0x79719b,2.6));
+    const light=new T.DirectionalLight(0xffe1b2,3);light.position.set(-3,7,5);this.scene.add(light,this.group);
+    this.crowd=new RaceCrowd(0,new Track(COURSES[0]),seeded(195));this.crowd.group.position.set(0,0,-3);this.crowd.group.rotation.y=0;this.scene.add(this.crowd.group);
+    this.confetti=new T.InstancedMesh(cube,new T.MeshStandardMaterial({roughness:0.5}),120);this.confetti.frustumCulled=false;
+    for(let i=0;i<120;i++)this.confetti.setColorAt(i,new T.Color([0xff5365,0xffcf63,0xffffff,0x62cfc2,0xa58cf5][i%5]));this.scene.add(this.confetti);
+  }
+  configure(entries:Celebrant[]){
+    for(const texture of this.textures)texture.dispose();this.textures=[];
+    this.group.traverse(o=>{if(o instanceof T.Mesh&&![...materials.values()].includes(o.material))o.material.dispose();});
+    this.group.clear();this.people=[];this.clock=0;
+    box(this.group,0x652c3b,0,-0.14,0,10,0.25,5);
+    const positions=[0,-2.15,2.15,3.9],heights=[1.00,0.60,0.36,0];
+    for(const entry of entries){
+      const i=entry.rank-1,x=positions[i],height=heights[i];
+      if(i<3){
+        box(this.group,i===0?0xb1723d:0x71454e,x,height/2,0,1.98,height,1.65);
+        box(this.group,0xffe9d2,x,height+0.025,0,2.0,0.055,1.67);
+        const canvas=document.createElement('canvas');canvas.width=128;canvas.height=64;const ctx=canvas.getContext('2d')!;
+        ctx.fillStyle='#fff0d8';ctx.textAlign='center';ctx.font='900 52px sans-serif';ctx.fillText(String(entry.rank),64,53);
+        const texture=new T.CanvasTexture(canvas);texture.colorSpace=T.SRGBColorSpace;this.textures.push(texture);
+        const face=box(this.group,0xffffff,x,height*0.46,0.835,0.8,Math.min(0.48,height*0.83),0.01);face.material=new T.MeshStandardMaterial({map:texture,transparent:true,roughness:1});
+      }
+      const model=makeRider(this.scene,entry.color,false,entry.design);this.scene.remove(model.root,model.shadow);model.shadow.material.dispose();this.group.add(model.root);
+      model.root.position.set(x,height+0.15,0);model.root.rotation.y=-Math.PI/2+0.08;
+      for(const child of model.body.children)if(child!==model.person)child.visible=false;
+      model.person.visible=true;poseLegsAndArms(model,1);
+      let trophy:T.Group|undefined;
+      if(i===0){trophy=new T.Group();model.person.add(trophy);box(trophy,0xeab04a,0,0.12,0,0.48,0.35,0.34);box(trophy,0xffd777,0,0.32,0,0.62,0.09,0.42);box(trophy,0xffdc82,0,-0.15,0,0.10,0.28,0.10);box(trophy,0xffd777,0,-0.32,0,0.40,0.08,0.30);for(const side of [-1,1])box(trophy,0xeab04a,side*0.32,0.14,0,0.12,0.22,0.12);}
+      this.people.push({model,rank:entry.rank,trophy});
+    }
+  }
+  frame(renderer:T.WebGLRenderer,dt:number,aspect:number,reduced:boolean){
+    this.clock+=dt;const t=this.clock;
+    this.camera.aspect=aspect;this.camera.position.set(reduced?0.3:Math.sin(t*0.22)*0.45,3.7,aspect<1.5?13.4:10.7);this.camera.lookAt(0.25,1.65,0);this.camera.updateProjectionMatrix();
+    for(const {model,rank,trophy} of this.people){
+      const wave=reduced?0:Math.sin(t*5+rank),bounce=reduced?0:Math.max(0,Math.sin(t*4+rank))*0.07;
+      model.person.position.y=bounce;
+      for(const [i,limb] of model.limbs.entries()){
+        const lift=rank===1||i===0?1:0;
+        limbSegment(limb.upperArm,-0.11,1.19,lift?-0.05:0.1,lift?1.55+wave*0.05:0.90);
+        limbSegment(limb.forearm,lift?-0.05:0.1,lift?1.55+wave*0.05:0.90,lift?0.15+wave*0.08:0.2,lift?1.95+wave*0.1:0.72);
+      }
+      if(trophy)trophy.position.set(0.15,2.14+wave*0.1,0);
+    }
+    this.crowd.react('finish',0.9);this.crowd.update(reduced?0:t,dt,reduced?0:0.7,true);
+    this.confetti.visible=!reduced;
+    for(let i=0;i<120&&!reduced;i++){
+      const x=Math.sin(i*51.7)*4.7+Math.sin(t+i)*0.22,y=5.7-((t*(0.5+(i%7)*0.07)+i*0.43)%5.9),z=Math.sin(i*13.2)*2;
+      this.marker.position.set(x,y,z);this.marker.rotation.set(t+i,t*1.8+i,t*2.2);this.marker.scale.set(0.055,0.10,0.025);this.marker.updateMatrix();this.confetti.setMatrixAt(i,this.marker.matrix);
+    }
+    this.confetti.instanceMatrix.needsUpdate=true;renderer.render(this.scene,this.camera);
+  }
+}
 export class View {
+  private readonly podiumScene=new PodiumScene();
+  private podiumHost?:HTMLElement;
+  setPodium(host?:HTMLElement){this.podiumHost=host;}
+  configurePodium(entries:Celebrant[]){this.podiumScene.configure(entries);}
+
   private readonly showroom=new Showroom();
   private garageHost?:HTMLElement;
   private readonly previews=new Map<string,string>();
@@ -784,6 +877,14 @@ export class View {
       this.width=w;this.height=h;this.renderer.setPixelRatio(pixelRatio);this.renderer.setSize(w,h,false);
       this.camera.aspect=w/h;
       this.camera.updateProjectionMatrix();
+    }
+    if(this.podiumHost&&!this.podiumHost.closest('[hidden]')){
+      const bounds=this.podiumHost.getBoundingClientRect();
+      this.renderer.setClearColor(0x24151d);this.renderer.clear();
+      this.renderer.setViewport(bounds.left,h-bounds.bottom,bounds.width,bounds.height);
+      this.renderer.setScissor(bounds.left,h-bounds.bottom,bounds.width,bounds.height);this.renderer.setScissorTest(true);
+      this.podiumScene.frame(this.renderer,dt,bounds.width/Math.max(1,bounds.height),this.reduceMotion);
+      this.renderer.setScissorTest(false);this.renderer.setViewport(0,0,w,h);return;
     }
     if(this.garageHost&&!this.garageHost.closest('[hidden]')){
       const bounds=this.garageHost.getBoundingClientRect();

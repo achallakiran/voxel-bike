@@ -79,6 +79,11 @@ export class Race {
     return [this.rider,...this.rivals].map((bike,index)=>({index,time:bike.finish}))
       .filter(entry=>entry.time>0).sort((a,b)=>a.time-b.time||a.index-b.index);
   }
+  // Freeze classification when the player finishes. Never invent times for unfinished riders.
+  get classification(){
+    return [this.rider,...this.rivals].map((bike,index)=>({index,time:bike.finish||undefined,distance:bike.x}))
+      .sort((a,b)=>a.time&&b.time?a.time-b.time||a.index-b.index:a.time?-1:b.time?1:b.distance-a.distance||a.index-b.index);
+  }
   get lap() {return this.mode==='practice'?this.practiceLaps+1:Math.min(this.track.laps,this.splits.length+1);}
   get lapTime(){return this.gateTime===null?0:Math.max(0,this.time-this.lastGateTime);}
   private score(kind:string,amount:number,cooldown:number){
@@ -181,8 +186,7 @@ export class Race {
     }
     if(this.rider.finish){
       if(!alreadyFinished)this.react('finish',this.track.end);
-      this.done=this.mode!=='rival'||this.time-this.rider.finish>=10||
-        (this.time-this.rider.finish>=1.15&&this.finishOrder.length>=3);
+      this.done=true;
     }
   }
   private rivalInput(b:Bike,i:number):Controls {

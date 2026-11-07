@@ -6,7 +6,7 @@ import {ProgressStore} from './progress';
 import {playStudioLogo} from './studio-logo';
 import {COURSES, DT, Track, Race, clamp, type Course, type Mode, type RecordRun} from './race';
 import {conditionKey, conditionBonus, resolveConditions, type ConditionChoice, type Conditions} from './conditions';
-import {View, CAMERA_NAMES, type CameraIndex} from './view';
+import {View, CAMERA_NAMES, type Celebrant, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
 type Screen = 'intro'|'home'|'select'|'settings'|'garage'|'race'|'pause'|'results'|'rotate'|'error';
@@ -61,7 +61,7 @@ class Sound {
     }catch{ /* Gameplay continues if audio is unavailable. */ }
   }
   resetCrowd(){this.audience?.reset();this.duckUntil=0;this.lastThunder=-1;}
-  update(race:Race|undefined){
+  update(race:Race|undefined,celebrating=false){
     if(!this.ctx||!this.engine||!this.gain||!this.filter)return;
     if(race){
 
@@ -72,7 +72,7 @@ class Sound {
         this.thunder();
       }
     }
-    if(this.audience){this.audience.volume=this.audienceVolume;this.audience.update(race,this.enabled);this.duckUntil=Math.max(this.duckUntil,this.audience.activeUntil);}
+    if(this.audience){this.audience.volume=this.audienceVolume;this.audience.update(race,this.enabled,celebrating);this.duckUntil=Math.max(this.duckUntil,this.audience.activeUntil);}
     const bike=race?.rider;
     const running=this.enabled&&bike&&!bike.finish&&!race.done&&race.time>0;
     const now=this.ctx.currentTime;
@@ -177,6 +177,7 @@ function clearInput(){
 function show(next:Screen){
   closeOptionMenu();
   view?.setGarage(next==='garage'?el('garageStage'):undefined);
+  view?.setPodium(next==='results'?el('podiumStage'):undefined);
   if(next!=='rotate'&&next!=='error'&&coarse.matches&&portrait.matches){
     rotationReturn=next;
     next='rotate';
@@ -188,7 +189,7 @@ function show(next:Screen){
   const current=el(next);
   if(next!=='race'&&next!=='intro')current.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus({preventScroll:true});
   else if(document.activeElement instanceof HTMLElement)document.activeElement.blur();
-  sound.update(next==='race'?race:undefined);
+  sound.update(next==='race'?race:undefined,next==='results');
 }
 let studioTimer:number|undefined;
 let studioStarted=false;
@@ -282,7 +283,7 @@ function start(c:Course,conditions=resolveConditions(conditionChoices())){
   hud(race);
   show('race');
 }
-type PodiumEntry={label:string; time:number; current:boolean; color:string};
+type PodiumEntry={label:string; time?:number; current:boolean; color:string; rider?:number};
 function showPodium(entries:PodiumEntry[]){
   const winner=entries[0]?.time??0;
   el('podium').replaceChildren(...[1,0,2].map(index=>{
@@ -297,7 +298,7 @@ function showPodium(entries:PodiumEntry[]){
       const label=document.createElement('b');
       label.textContent=entry.label;
       const time=document.createElement('small');
-      time.textContent=clock(entry.time)+(index?' · +'+(entry.time-winner).toFixed(2)+' s':'');
+      time.textContent=entry.time===undefined?'':clock(entry.time)+(index?' · +'+(entry.time-winner).toFixed(2)+' s':'');
       step.append(rider,label,time);
       if(entry.current)step.classList.add('current');
     }
@@ -320,9 +321,10 @@ function endRace(finished:Race){
     title=['1st place','2nd place','3rd place','4th place'][finished.position-1];
     detail='Position '+finished.position+' / '+(finished.rivals.length+1);
     const origin=finished.rider.finish-finished.elapsed;
-    podium=finished.finishOrder.slice(0,3).map(({index,time})=>({
-      label:index?'Rival '+index:'You',time:time-origin,current:index===0,color:riderColors[index]
+    podium=finished.classification.slice(0,3).map(({index,time})=>({
+      label:index?'Rival '+index:'You',time:time===undefined?undefined:time-origin,current:index===0,color:riderColors[index],rider:index
     }));
+    if(finished.classification.some(entry=>entry.time===undefined))detail+=' · Field classified at your finish';
   }
   if(mode==='trial'){
     const time=finished.elapsed, target=course.gold*finished.track.laps;
@@ -331,8 +333,8 @@ function endRace(finished:Race){
     podium=[{label:'This run',time,current:true,color:riderColors[0]},
       ...pastTimes(key,best?.time).map((previous,index)=>({
         label:index?'Previous run':'Previous best',time:previous,current:false,color:'#698ea0'
-      }))].sort((a,b)=>a.time-b.time);
-    const history=podium.slice(0,2).map(entry=>entry.time);
+      }))].sort((a,b)=>a.time!-b.time!);
+    const history=podium.slice(0,2).map(entry=>entry.time!);
     histories.set(key,history);
     save('podium:v1:'+key,history);
     const medal=time<=target?'Gold':time<=target*1.16?'Silver':time<=target*1.36?'Bronze':'No';
@@ -355,6 +357,11 @@ function endRace(finished:Race){
     return row;
   }));
   showPodium(podium);
+  const celebrants:Celebrant[]=podium.map((entry,rank)=>({label:entry.label,color:parseInt(entry.color.slice(1),16),rank:rank+1,current:entry.current,
+    design:entry.rider===undefined||entry.rider===0?finished.loadout.bike:finished.opponentLoadouts[entry.rider-1].bike}));
+  if(mode==='rival'&&!podium.some(entry=>entry.current))celebrants.push({label:'You',color:finished.colors[0],rank:4,current:true,design:finished.loadout.bike});
+  view?.configurePodium(celebrants);
+  el('podiumStage').setAttribute('aria-label',celebrants.map(entry=>entry.rank+'. '+entry.label).join(', ')+'. Celebration');
   if(podium.length&&!podium.some(entry=>entry.current))el('resultDetail').classList.add('outside-podium');
   else el('resultDetail').classList.remove('outside-podium');
   el('resultTitle').textContent=title;
@@ -375,7 +382,7 @@ function endRace(finished:Race){
       if(race===finished&&screen==='results'&&!progress.persistent)reward.textContent+=' · '+message;
     });
   }
-  show('results');
+  clearInput();show('results');
 }
 function setFill(id:string,percent:number){
   const bar=el(id);bar.style.transform='scaleX('+percent/100+')';
@@ -493,7 +500,7 @@ window.addEventListener('keydown',e=>{
 });
 window.addEventListener('keyup',e=>{if(held.delete(e.code))readInput();});
 window.addEventListener('blur',()=>{if(screen==='race')show('pause');else clearInput();});
-document.addEventListener('visibilitychange',()=>{if(document.hidden&&screen==='race')show('pause');});
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&screen==='race')show('pause');else if(document.hidden)sound.update(undefined);});
 for(const b of tapButtons){
   b.addEventListener('pointerdown',e=>{
     e.preventDefault();
@@ -636,6 +643,7 @@ function loop(now:number){
     if(race.done)endRace(race);
     else if(race.rider.finish&&!el('race').classList.contains('finish-shot')){el('race').classList.add('finish-shot');clearInput();}
   }
+  if(screen==='results')sound.update(undefined,!document.hidden);
   if(screen!=='error'&&screen!=='intro'&&!(screen==='rotate'&&rotationReturn==='intro'))view?.frame(dt,race,race?.done?1:clamp(accumulator/DT,0,1));
   if(race&&screen==='race')raceMap.update(race.done?1:clamp(accumulator/DT,0,1));
   requestAnimationFrame(loop);

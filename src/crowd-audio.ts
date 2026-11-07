@@ -8,10 +8,13 @@ export class CrowdAudio {
   private bus:GainNode;
   private ambienceGain:GainNode;
   private buffers=new Map<string,AudioBuffer>();
+  private applause?:AudioBufferSourceNode;
+  private applauseGain:GainNode;
   private serial=0;
   private next=0;
   constructor(private ctx:AudioContext){
-    this.bus=ctx.createGain();this.bus.connect(ctx.destination);
+    this.bus=ctx.createGain();const limiter=ctx.createDynamicsCompressor();limiter.threshold.value=-6;limiter.knee.value=6;limiter.ratio.value=5;limiter.attack.value=0.004;limiter.release.value=0.18;this.bus.connect(limiter).connect(ctx.destination);
+    this.applauseGain=ctx.createGain();this.applauseGain.gain.value=0;this.applauseGain.connect(this.bus);
     this.ambienceGain=ctx.createGain();this.ambienceGain.gain.value=0;this.ambienceGain.connect(this.bus);
     const bed=ctx.createBufferSource();bed.buffer=this.sample('ambient',0);bed.loop=true;bed.connect(this.ambienceGain);bed.start();
     // Prepare variants before racing to avoid synthesis work on a landing frame.
@@ -36,7 +39,7 @@ export class CrowdAudio {
         const pitch=f0*(gasp?1.05-0.23*u:1+0.16*Math.sin(u*Math.PI))+Math.sin(t*27+phase)*3;
         let vocal=0;for(let h=1;h<=20;h++)vocal+=Math.sin(2*Math.PI*h*pitch*t+phase)*coeffs[h-1];
         const breath=(random()*2-1)*(gasp?0.22:0.04);
-        const value=(vocal*0.030+breath*0.055)*envelope;
+        const value=(vocal*0.055+breath*0.055)*envelope;
         channels[0][i]+=value*(1-pan);channels[1][i]+=value*pan;
       }
     }
@@ -53,13 +56,17 @@ export class CrowdAudio {
     if(peak>0.70)for(const channel of channels)for(let i=0;i<channel.length;i++)channel[i]*=0.70/peak;
     this.buffers.set(key,buffer);return buffer;
   }
-  update(race:Race|undefined,enabled:boolean){
-    const now=this.ctx.currentTime;this.bus.gain.setTargetAtTime(enabled&&(race||this.celebration&&now<this.activeUntil)?this.volume:0,now,0.035);
+  update(race:Race|undefined,enabled:boolean,celebrating=false){
+    const now=this.ctx.currentTime;this.bus.gain.setTargetAtTime(enabled&&(celebrating||race||this.celebration&&now<this.activeUntil)?this.volume:0,now,0.035);
+    if(celebrating&&enabled&&!this.applause){
+      this.applause=this.ctx.createBufferSource();this.applause.buffer=this.sample('finish',1);this.applause.loop=true;this.applause.playbackRate.value=0.94;this.applause.connect(this.applauseGain);this.applause.start();
+    }else if((!celebrating||!enabled)&&this.applause){this.applause.stop();this.applause.disconnect();this.applause=undefined;}
+    this.applauseGain.gain.setTargetAtTime(celebrating&&enabled?0.95:0,now,0.35);
     const running=race&&race.time>=0&&!race.done;
     const spacing=race?.track.course.theme===0?24:40;
     const local=race?.track.local(race.rider.x)??0;
     const near=running?Math.max(0,1-Math.abs(((local-6+spacing/2)%spacing+spacing)%spacing-spacing/2)/18):0;
-    this.ambienceGain.gain.setTargetAtTime(running?0.23*near:0,now,0.3);
+    this.ambienceGain.gain.setTargetAtTime(running?0.50*near:celebrating?0.20:0,now,0.3);
     if(!race||!enabled)return;
     const events=race.crowd.filter(e=>e.serial>this.serial);if(!events.length)return;
     this.serial=events.at(-1)!.serial;
@@ -68,7 +75,7 @@ export class CrowdAudio {
     if(!reaction||now<this.next&&reaction.kind!=='finish'&&reaction.kind!=='gasp')return;
     const source=this.ctx.createBufferSource(),gain=this.ctx.createGain(),pan=this.ctx.createStereoPanner();
     source.buffer=this.sample(reaction.kind,reaction.serial%2);source.playbackRate.value=0.95+(reaction.serial%5)*0.025;
-    gain.gain.value=(reaction.kind==='finish'?1.1:0.82)*Math.max(0.2,1-Math.abs(race.track.delta(reaction.x,race.rider.x))/48);
+    gain.gain.value=(reaction.kind==='finish'?1.85:1.5)*Math.max(0.2,1-Math.abs(race.track.delta(reaction.x,race.rider.x))/48);
     pan.pan.value=Math.max(-0.65,Math.min(0.65,race.rider.z/7));source.connect(gain).connect(pan).connect(this.bus);source.start();
     source.onended=()=>{source.disconnect();gain.disconnect();pan.disconnect();};this.next=now+0.65;this.activeUntil=now+(reaction.kind==='finish'?2.2:1.2);this.celebration=reaction.kind==='finish';
   }
