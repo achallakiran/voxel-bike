@@ -42,3 +42,10 @@ export const DIFFICULTIES:Record<Difficulty,{label:string;pace:number;decision:n
   medium:{label:'Medium',pace:0.82,decision:53,turbo:0.58,aim:3.7,reward:1.3},
   hard:{label:'Hard',pace:1,decision:37,turbo:0.30,aim:4.8,reward:1.6}
 };
+
+export function raceColors(loadout:Loadout):number[] {
+  const player=bikeDefinition(loadout.bike).color;
+  const rivals=loadout.bike==='swift'?[0x528cff,0xbc75f0,0x55d3bd]:
+    loadout.bike==='redline'?[0x528cff,0xf8c84b,0xed79ae]:[0x528cff,0xf8c84b,0x55d3bd];
+  return [player,...rivals];
+}

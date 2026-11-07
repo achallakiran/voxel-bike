@@ -1,6 +1,6 @@
 import {LANES, Track, blend, clamp, type Surface} from './tracks';
 import {DEFAULT_CONDITIONS, wetness, type Conditions} from './conditions';
-import {BASE_LOADOUT, DIFFICULTIES, bikeStats, type Difficulty, type Loadout} from './bikes';
+import {BASE_LOADOUT, DIFFICULTIES, bikeStats, raceColors, type Difficulty, type Loadout} from './bikes';
 export {COURSES, LANES, PIECES, Track, WIDTH, blend, clamp} from './tracks';
 export type {Course, Piece} from './tracks';
 export const DT=1/120;
@@ -45,6 +45,7 @@ export class Race {
   private bestPassX=-Infinity;
   private pointAt=new Map<string,number>();
   readonly loadout:Loadout;
+  readonly colors:number[];
   private readonly playerStats:ReturnType<typeof bikeStats>;
   feedback: Feedback | null = null;
   feedbackTime = 0;
@@ -60,7 +61,7 @@ export class Race {
   private crowdSerial=0;
   readonly inputs = {gas:false, brake:false, turbo:false, pitch:0};
   constructor(readonly track: Track, readonly mode: Mode, readonly ghost: RecordRun | undefined, readonly conditions:Conditions=DEFAULT_CONDITIONS, readonly difficulty:Difficulty='easy',loadout:Loadout=BASE_LOADOUT) {
-    this.loadout=structuredClone(loadout);this.playerStats=bikeStats(this.loadout);
+    this.loadout=structuredClone(loadout);this.colors=raceColors(this.loadout);this.playerStats=bikeStats(this.loadout);
     this.startX=track.circuit?-6:5;
     this.gateTime=track.circuit?null:0;
     this.rider = newBike(this.startX,2);

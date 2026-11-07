@@ -1,8 +1,10 @@
+import {RaceMap} from './race-map';
+import {mountOptionControls,refreshOptionControls,closeOptionMenu} from './option-controls';
 import {BASE_LOADOUT, BIKE_CATALOG, DIFFICULTIES, UPGRADE_KEYS, UPGRADE_PRICES, UPGRADE_INFO, bikeStats, loadoutKey, validLoadout, type BikeId, type Difficulty, type Loadout} from './bikes';
 import {ProgressStore} from './progress';
 import {playStudioLogo} from './studio-logo';
 import {COURSES, DT, Track, Race, clamp, type Course, type Mode, type RecordRun} from './race';
-import {conditionKey, type Conditions} from './conditions';
+import {conditionKey, resolveConditions, type ConditionChoice, type Conditions} from './conditions';
 import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
@@ -151,9 +153,14 @@ difficultySetting.value=Object.hasOwn(DIFFICULTIES,savedDifficulty)?savedDifficu
 difficultySetting.addEventListener('change',()=>save('raceDifficulty',difficultySetting.value));
 function selectedDifficulty(){return difficultySetting.value as Difficulty;}
 const daylightSetting=el<HTMLSelectElement>('daylightSetting'), weatherSetting=el<HTMLSelectElement>('weatherSetting');
-function selectedConditions():Conditions{
-  return {light:daylightSetting.value as Conditions['light'],weather:weatherSetting.value as Conditions['weather']};
+function conditionChoices():ConditionChoice{
+  return {light:daylightSetting.value as ConditionChoice['light'],weather:weatherSetting.value as ConditionChoice['weather']};
 }
+function selectedConditions():Conditions|undefined{
+  const choices=conditionChoices();
+  return choices.light==='Random'||choices.weather==='Random'?undefined:{light:choices.light,weather:choices.weather};
+}
+const raceMap=new RaceMap(el('trackMap'));
 function recordKey(courseId:string,laps:number,conditions:Conditions,loadout=progress.loadout()){
   return courseId+':'+laps+conditionKey(conditions)+loadoutKey(loadout);
 }
@@ -189,6 +196,7 @@ function clearInput(){
   readInput();
 }
 function show(next:Screen){
+  closeOptionMenu();
   if(next!=='rotate'&&next!=='error'&&coarse.matches&&portrait.matches){
     rotationReturn=next;
     next='rotate';
@@ -267,7 +275,8 @@ function renderCourses(){
   el('courses').replaceChildren(...COURSES.map((c,i)=>{
     const b=document.createElement('button');b.className='course-card';
     b.style.setProperty('--card',['#b42630','#925557','#713538','#c02430','#b48580'][i]);
-    const best=mode==='trial'?storedRun(recordKey(c.id,raceLaps,selectedConditions())):undefined;
+    const conditions=selectedConditions();
+    const best=mode==='trial'&&conditions?storedRun(recordKey(c.id,raceLaps,conditions)):undefined;
     const preview=coursePreviews[i];
     b.innerHTML='<span class="card-index">0'+(i+1)+' · '+preview.length+' M</span>'+preview.diagram+'<b>'+c.name+'</b><span>'+c.tagline+'</span>'+
       '<small>'+(mode==='trial'?'QUALIFY '+clock(c.gold*raceLaps*1.29):mode==='practice'?'ENDLESS RIDE':raceLaps+' LAPS')+
@@ -275,14 +284,15 @@ function renderCourses(){
     b.addEventListener('click',()=>start(c));return b;
   }));
 }
-function start(c:Course){
+function start(c:Course,conditions=resolveConditions(conditionChoices())){
   if(!view)return;
   course=c;
   const track=new Track(course,mode==='practice'?1:raceLaps);
   const loadout=progress.loadout();
-  const conditions=selectedConditions();
   view.reset(track,conditions);
   race=new Race(track,mode,mode==='trial'?storedRun(recordKey(course.id,track.laps,conditions,loadout)):undefined,conditions,selectedDifficulty(),loadout);
+  raceMap.reset(race);
+  el('raceConditions').textContent=conditions.light+' · '+conditions.weather;
   sound.resetCrowd();sound.unlock();
   el('courseLabel').textContent=course.name.toUpperCase();
   countdown='';lastSignal='';accumulator=0;
@@ -291,7 +301,6 @@ function start(c:Course){
   show('race');
 }
 type PodiumEntry={label:string; time:number; current:boolean; color:string};
-const riderColors=['#d32a3c','#56bcb6','#ffc35d','#8c91e8'];
 function showPodium(entries:PodiumEntry[]){
   const winner=entries[0]?.time??0;
   el('podium').replaceChildren(...[1,0,2].map(index=>{
@@ -320,7 +329,7 @@ function showPodium(entries:PodiumEntry[]){
 }
 function endRace(finished:Race){
   if(finished.mode==='practice')return;
-  riderColors[0]='#'+bikeStats(finished.loadout).color.toString(16).padStart(6,'0');
+  const riderColors=finished.colors.map(color=>'#'+color.toString(16).padStart(6,'0'));
   el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':'Time Trial');
   el('resultTime').textContent=clock(finished.elapsed);
   let title='Run complete',detail='Course cleared';
@@ -392,7 +401,6 @@ function hud(r:Race){
   el('time').textContent=clock(r.mode==='practice'?r.lapTime:r.elapsed);
   el('score').textContent=String(r.points);
   el('lap').textContent=r.mode==='practice'?' · LAP '+r.lap+(r.practiceBest?' · BEST '+clock(r.practiceBest):''):' · LAP '+r.lap+' / '+r.track.laps;
-  setFill('progress',r.mode==='practice'?clamp(r.track.local(r.rider.x)/r.track.lapLength*100,0,100):clamp((r.rider.x-r.startX)/(r.track.end-r.startX)*100,0,100));
   setFill('heat',r.rider.heat);
   const heatLabel=el('heatLabel'), label=r.rider.hot?'ENGINE CUT':'ENGINE HEAT';
   if(heatLabel.textContent!==label)heatLabel.textContent=label;
@@ -572,7 +580,7 @@ if(location.protocol==='file:')el('offline').hidden=true;
 button('cameraButton',nextCamera);
 button('pauseButton',()=>show('pause'));
 button('resume',()=>{sound.unlock();show('race');});
-button('restart',()=>start(course));button('retry',()=>start(course));
+button('restart',()=>start(course,race?.conditions));button('retry',()=>start(course,race?.conditions));
 button('nextTrack',()=>{
   const next=(COURSES.findIndex(c=>c.id===course.id)+1)%COURSES.length;
   start(COURSES[next]);
@@ -593,6 +601,7 @@ function setCamera(index:number){
   el('laneKeys').textContent=forwardView()?'← / →':'↑ / ↓';
   el('pitchKeys').textContent=forwardView()?'↓ / ↑':'← / →';
   if(view)view.cameraIndex=cameraIndex;
+  refreshOptionControls();
 }
 function nextCamera(){setCamera((cameraIndex+1)%CAMERA_NAMES.length);syncSettings();}
 setCamera(settings.camera??0);
@@ -605,6 +614,7 @@ function syncSettings(){
 soundToggle.addEventListener('change',()=>{syncSettings();sound.unlock();});
 qualityToggle.addEventListener('change',syncSettings);
 cameraSetting.addEventListener('change',()=>{setCamera(Number(cameraSetting.value));syncSettings();});
+mountOptionControls();
 let last=performance.now(), accumulator=0;
 function loop(now:number){
   const dt=clamp((now-last)/1000,0,0.12);last=now;
@@ -618,6 +628,7 @@ function loop(now:number){
     else if(race.rider.finish&&!el('race').classList.contains('finish-shot')){el('race').classList.add('finish-shot');clearInput();}
   }
   if(screen!=='error'&&screen!=='intro'&&!(screen==='rotate'&&rotationReturn==='intro'))view?.frame(dt,race,race?.done?1:clamp(accumulator/DT,0,1));
+  if(race&&screen==='race')raceMap.update(race.done?1:clamp(accumulator/DT,0,1));
   requestAnimationFrame(loop);
 }
 try{

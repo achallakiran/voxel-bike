@@ -40,8 +40,8 @@
     <div class="panel select-panel">
       <div class="eyebrow">Redline Series / Course Select</div><h2 id="modeTitle">Time Trial</h2>
       <div class="race-options"><label class="lap-setting">Laps <select id="lapSetting"><option value="3">3</option><option value="5">5</option><option value="7">7</option></select></label>
-      <label class="lap-setting">Light <select id="daylightSetting"><option>Morning</option><option selected>Noon</option><option>Evening</option><option>Night</option></select></label>
-      <label class="lap-setting">Weather <select id="weatherSetting"><option>Clear</option><option>Rain</option><option>Thunderstorm</option></select></label></div>
+      <label class="lap-setting">Light <select id="daylightSetting"><option selected>Random</option><option>Morning</option><option>Noon</option><option>Evening</option><option>Night</option></select></label>
+      <label class="lap-setting">Weather <select id="weatherSetting"><option selected>Random</option><option>Clear</option><option>Rain</option><option>Thunderstorm</option></select></label></div>
       <label class="lap-setting">Rivals <select id="difficultySetting"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label>
       <div class="selected-bike"><span id="selectedBike"></span><button id="selectGarage" class="text-button">Garage · <span data-credits></span></button></div>
       <div id="courses" class="cards"></div>
@@ -73,8 +73,8 @@
 
   <section id="race" class="screen" hidden>
     <div class="hud">
-      <div class="hud-chip"><small id="timeLabel">TIME</small><strong id="time">00:00.00</strong><small class="score-label"><span id="score">0</span> PTS</small></div>
-      <div class="hud-middle"><div class="course-label"><span id="courseLabel"></span><span id="lap"></span></div><div class="course-progress" role="progressbar" aria-label="Course progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div></div>
+      <div class="hud-time"><small id="timeLabel">TIME</small><strong id="time">00:00.00</strong><small class="score-label"><span id="score">0</span> PTS</small></div>
+      <div class="hud-middle"><div id="trackMap" class="track-map"></div><div class="course-label"><span id="courseLabel"></span><span id="lap"></span></div><small id="raceConditions" class="race-conditions"></small></div>
       <div class="hud-right">
         <div class="hud-chip heat-chip"><small id="heatLabel">ENGINE HEAT</small><div class="heat" role="meter" aria-label="Engine heat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="heat"></i></div></div>
         <button id="cameraButton" class="square" aria-label="Change camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>

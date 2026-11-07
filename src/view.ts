@@ -1,4 +1,4 @@
-import {bikeStats, BASE_LOADOUT, type BikeId} from './bikes';
+import {type BikeId} from './bikes';
 import * as T from 'three';
 import {DEFAULT_CONDITIONS, wetness, type Conditions} from './conditions';
 import {RaceEffects} from './race-effects';
@@ -749,14 +749,13 @@ export class View {
     const n=bikes.length;
     while(this.riders.length<n){
       const rival=this.riders.length>0;
-      const spec=bikeStats(race.loadout);
-      const view=makeRider(this.scene,rival?[0xd32a3c,0x56bcb6,0xffc35d,0x8c91e8][this.riders.length]:spec.color,
+      const view=makeRider(this.scene,race.colors[this.riders.length],
         false,rival?'starter':race.loadout.bike);
       if(rival)this.visibility.addGroup(view.root);
       this.riders.push(view);
     }
     const ghost=race.ghost;
-    if(ghost&&this.riders.length===n)this.riders.push(makeRider(this.scene,0xbafcf2,true,ghost.loadout?.bike??'starter'));
+    if(ghost&&this.riders.length===n)this.riders.push(makeRider(this.scene,0xe8edf1,true,ghost.loadout?.bike??'starter'));
     const showGhost=ghost && race.time>=0 && race.time<=ghost.frames[ghost.frames.length-1][0];
     if(showGhost){
       const i=clamp(Math.floor(race.time/(DT*6)),0,ghost.frames.length-1);

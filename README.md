@@ -13,7 +13,7 @@ The Garage starts with a free Trail 125. Completed races earn credits and skill 
 
 Time Trial saves your best run as a ghost when browser storage is available. Rival Race and Time Trial offer 3, 5 or 7 laps, with individual splits and the fastest lap in the results. Next Track starts the next course with the same race settings.
 
-Select Morning, Noon, Evening or Night and Clear, Rain or Thunderstorm before a race. Rain changes braking and lane response. Night uses a headlight and reflective markers. Time Trial compares previous runs for the same conditions and bike configuration, and Rival Race ranks confirmed finishers on the podium.
+Light and weather default to Random, independently resolving when a new race or Next Track starts. Choose Morning, Noon, Evening or Night and Clear, Rain or Thunderstorm to fix either setting. Restart and Race Again keep the resolved conditions; Practice keeps them until you leave. The transparent circuit map follows each rider, with a white halo around the player and distinct rival colors shared by bikes and podiums. Rain changes braking and lane response. Night uses a headlight and reflective markers. Time Trial compares previous runs for the same conditions and bike configuration, and Rival Race ranks confirmed finishers on the podium.
 
 ## Build
 

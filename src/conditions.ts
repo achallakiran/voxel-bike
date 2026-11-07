@@ -5,6 +5,13 @@ export const WEATHER = ['Clear','Rain','Thunderstorm'] as const;
 export type Conditions = { light: (typeof DAYLIGHTS)[number]; weather: (typeof WEATHER)[number] };
 export const DEFAULT_CONDITIONS: Conditions = {light:'Noon',weather:'Clear'};
 
+export type ConditionChoice={light:Conditions['light']|'Random';weather:Conditions['weather']|'Random'};
+export function resolveConditions(choice:ConditionChoice,random= Math.random):Conditions {
+  const draw=<T>(values:readonly T[])=>values[Math.min(values.length-1,Math.max(0,Math.floor(random()*values.length)))];
+  return {light:choice.light==='Random'?draw(DAYLIGHTS):choice.light,
+    weather:choice.weather==='Random'?draw(WEATHER):choice.weather};
+}
+
 export function conditionKey(conditions:Conditions) {
   return conditions.light==='Noon'&&conditions.weather==='Clear'
     ? '' : ':'+conditions.light.toLowerCase()+':'+conditions.weather.toLowerCase();
