@@ -1,10 +1,11 @@
+import {CrowdAudio} from './crowd-audio';
 import {RaceMap} from './race-map';
 import {mountOptionControls,refreshOptionControls,closeOptionMenu} from './option-controls';
-import {BASE_LOADOUT, BIKE_CATALOG, DIFFICULTIES, UPGRADE_KEYS, UPGRADE_PRICES, UPGRADE_INFO, bikeStats, loadoutKey, validLoadout, type BikeId, type Difficulty, type Loadout} from './bikes';
+import {BASE_LOADOUT, BIKE_CATALOG, DIFFICULTIES, UPGRADE_KEYS, UPGRADE_PRICES, UPGRADE_INFO, PAINTS, collectionUnlocked, bikeStats, loadoutKey, validLoadout, type BikeId, type Difficulty, type Loadout} from './bikes';
 import {ProgressStore} from './progress';
 import {playStudioLogo} from './studio-logo';
 import {COURSES, DT, Track, Race, clamp, type Course, type Mode, type RecordRun} from './race';
-import {conditionKey, resolveConditions, type ConditionChoice, type Conditions} from './conditions';
+import {conditionKey, conditionBonus, resolveConditions, type ConditionChoice, type Conditions} from './conditions';
 import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
@@ -19,6 +20,8 @@ try{browserStorage=localStorage;}catch{}
 const progress=new ProgressStore(browserStorage);
 const settledRaces=new WeakSet<Race>();
 let garageBusy=false;
+let garageBike:BikeId='starter';
+let garageComponent='';
 function load<T>(key:string, fallback:T):T {
   try { return JSON.parse(localStorage.getItem(prefix+key) ?? 'null') ?? fallback; }
   catch { return fallback; }
@@ -34,10 +37,11 @@ function clock(value:number) {
 }
 class Sound {
   enabled=true;
-  private lastCrowd=0;
+  audienceVolume=0.7;
+  private audience?:CrowdAudio;
   private lastThunder=-1;
   private duckUntil=0;
-  private crowdNoise?:AudioBuffer;
+
   private ctx?:AudioContext;
   private gain?:GainNode;
   private engine?:OscillatorNode;
@@ -47,6 +51,7 @@ class Sound {
     try{
       if(!this.ctx){
         this.ctx=new AudioContext();
+        this.audience=new CrowdAudio(this.ctx);
         this.gain=this.ctx.createGain();this.gain.gain.value=0;
         this.filter=this.ctx.createBiquadFilter();this.filter.type='lowpass';
         this.engine=this.ctx.createOscillator();this.engine.type='sawtooth';
@@ -55,39 +60,11 @@ class Sound {
       if(this.ctx.state!=='running')void this.ctx.resume().catch(()=>{});
     }catch{ /* Gameplay continues if audio is unavailable. */ }
   }
-  resetCrowd(){this.lastCrowd=0;this.duckUntil=0;this.lastThunder=-1;}
-  private crowd(race:Race){
-    const latest=race.crowd.at(-1), ctx=this.ctx;
-    if(!latest||latest.serial<=this.lastCrowd||!ctx)return;
-    const reaction=race.crowd.filter(event=>event.serial>this.lastCrowd&&Math.abs(race.track.delta(event.x,race.rider.x))<36).at(-1);
-    this.lastCrowd=latest.serial;
-    if(!reaction||!this.enabled||ctx.state!=='running'||ctx.currentTime<this.duckUntil&&reaction.kind!=='finish')return;
-    if(!this.crowdNoise){
-      this.crowdNoise=ctx.createBuffer(1,Math.ceil(ctx.sampleRate*0.9),ctx.sampleRate);
-      const samples=this.crowdNoise.getChannelData(0);
-      let filtered=0;
-      for(let i=0;i<samples.length;i++){
-        filtered=filtered*0.72+(Math.random()*2-1)*0.28;
-        samples[i]=filtered;
-      }
-    }
-    const source=ctx.createBufferSource(), band=ctx.createBiquadFilter(), gain=ctx.createGain(), now=ctx.currentTime;
-    const cheer=reaction.kind!=='gasp';
-    const big=reaction.kind==='lap'||reaction.kind==='finish';
-    this.duckUntil=now+0.63;
-    source.buffer=this.crowdNoise;
-    band.type='bandpass';band.Q.value=0.85;band.frequency.value=cheer?1190:630;
-    band.frequency.exponentialRampToValueAtTime(cheer?1770:365,now+0.45);
-    gain.gain.setValueAtTime(0.001,now);
-    gain.gain.exponentialRampToValueAtTime(big?0.32:cheer?0.23:0.19,now+0.075);
-    gain.gain.exponentialRampToValueAtTime(0.001,now+0.82);
-    source.connect(band).connect(gain).connect(ctx.destination);
-    source.start();
-  }
+  resetCrowd(){this.audience?.reset();this.duckUntil=0;this.lastThunder=-1;}
   update(race:Race|undefined){
     if(!this.ctx||!this.engine||!this.gain||!this.filter)return;
     if(race){
-      this.crowd(race);
+
       const stormTime=race.time-18.85;
       const flash=Math.floor(stormTime/20);
       if(race.conditions.weather==='Thunderstorm'&&flash>this.lastThunder&&stormTime>=0&&!race.done){
@@ -95,13 +72,15 @@ class Sound {
         this.thunder();
       }
     }
+    if(this.audience){this.audience.volume=this.audienceVolume;this.audience.update(race,this.enabled);this.duckUntil=Math.max(this.duckUntil,this.audience.activeUntil);}
     const bike=race?.rider;
     const running=this.enabled&&bike&&!bike.finish&&!race.done&&race.time>0;
     const now=this.ctx.currentTime;
     const motor=running?(bike.crash?0.014:!race.inputs.brake&&(race.inputs.gas||race.inputs.turbo)?0.055:0.026):0;
     this.gain.gain.setTargetAtTime(motor*(now<this.duckUntil?0.36:1),now,0.05);
     if(!running)return;
-    const rev=43+bike.speed*2.9+(bike.air?18:0)+(race.inputs.turbo&&!bike.hot?13:0);
+    const voice=bikeStats(race.loadout).voice*(1+race.loadout.levels.engine*0.035);
+    const rev=(43+bike.speed*2.9+(bike.air?18:0)+(race.inputs.turbo&&!bike.hot?13:0))*voice;
     this.engine.frequency.setTargetAtTime(bike.crash?38:rev,now,0.035);
     this.filter.frequency.setTargetAtTime(bike.hot?180:220+bike.speed*17,now,0.07);
   }
@@ -142,7 +121,7 @@ const tapButtons=Array.from(document.querySelectorAll<HTMLButtonElement>('[data-
 const coarse=matchMedia('(any-pointer: coarse)');
 const portrait=matchMedia('(orientation: portrait)');
 const sound=new Sound();
-const settings=load<{sound:boolean;quality:boolean;camera?:number}>('settings',{sound:true,quality:true});
+const settings=load<{sound:boolean;quality:boolean;camera?:number;crowdVolume?:number}>('settings',{sound:true,quality:true});
 let cameraIndex:CameraIndex=0;
 let rotationReturn:Screen='intro';
 const forwardView=()=>cameraIndex===2||cameraIndex===4;
@@ -197,6 +176,7 @@ function clearInput(){
 }
 function show(next:Screen){
   closeOptionMenu();
+  view?.setGarage(next==='garage'?el('garageStage'):undefined);
   if(next!=='rotate'&&next!=='error'&&coarse.matches&&portrait.matches){
     rotationReturn=next;
     next='rotate';
@@ -267,6 +247,8 @@ function choose(next:Mode){
 }
 for(const control of [daylightSetting,weatherSetting])control.addEventListener('change',renderCourses);
 function renderCourses(){
+  const fixed=selectedConditions();
+  el('conditionReward').textContent=fixed&&conditionBonus(fixed)>0?'+'+Math.round(conditionBonus(fixed)*100)+'% rewards':'';
   el('modeTitle').textContent=mode==='trial'?'Time Trial':mode==='practice'?'Practice':'Rival Race';
   lapSetting.closest('label')!.hidden=mode==='practice';
   difficultySetting.closest('label')!.hidden=mode!=='rival';
@@ -383,8 +365,11 @@ function endRace(finished:Race){
     settledRaces.add(finished);
     const multiplier=finished.mode==='rival'?DIFFICULTIES[finished.difficulty].reward:1;
     const placement=finished.mode==='rival'?[100,65,35,15][finished.position-1]:35;
-    const credits=Math.round((finished.track.laps*40+placement+Math.min(80,finished.points/5))*multiplier);
-    reward.textContent='+'+credits+' credits · '+finished.points+' points';
+    const base=Math.round(finished.track.laps*40+placement+Math.min(80,finished.points/5));
+    const difficultyBonus=Math.round(base*(multiplier-1));
+    const bonus=Math.round((base+difficultyBonus)*conditionBonus(finished.conditions));
+    const credits=base+difficultyBonus+bonus;
+    reward.textContent='+'+credits+' CR · '+finished.points+' PTS · Base '+base+(difficultyBonus?' · Difficulty +'+difficultyBonus:'')+(bonus?' · Conditions +'+bonus:'');
     void progress.reward(finished.id,credits,finished.points).then(message=>{
       refreshWallet();
       if(race===finished&&screen==='results'&&!progress.persistent)reward.textContent+=' · '+message;
@@ -532,37 +517,57 @@ async function garageAction(action:()=>Promise<string>){
   finally{garageBusy=false;renderGarage();}
 }
 function renderGarage(){
-  const p=progress.read(),loadout=progress.loadout(),stats=bikeStats(loadout);
-  refreshWallet();
+  const p=progress.read(),owned=!!p.owned[garageBike];
+  const loadout:Loadout={bike:garageBike,levels:p.owned[garageBike]??{...BASE_LOADOUT.levels},paint:p.paints?.[garageBike]};
+  const stats=bikeStats(loadout),unlocked=collectionUnlocked(p.owned,garageBike);
+  refreshWallet();view?.configureGarage(loadout,garageComponent);
+  el('garageName').textContent=stats.name;el('garageCharacter').textContent=stats.description;
   el('garageBikes').replaceChildren(...BIKE_CATALOG.map(bike=>{
-    const card=document.createElement('div');
-    card.className='garage-bike'+(p.selected===bike.id?' selected':'');
-    card.style.setProperty('--bike-color','#'+bike.color.toString(16).padStart(6,'0'));
+    const card=document.createElement('button');card.type='button';card.className='garage-bike'+(garageBike===bike.id?' selected':'');
+    card.setAttribute('aria-label',bike.name+(p.owned[bike.id]?' · Owned':collectionUnlocked(p.owned,bike.id)?' · '+bike.price+' credits':' · Locked'));
+    card.setAttribute('aria-pressed',String(garageBike===bike.id));
+    const image=document.createElement('img');image.src=view?.preview({bike:bike.id,levels:p.owned[bike.id]??{...BASE_LOADOUT.levels},paint:p.paints?.[bike.id]})??'';image.alt='';
     const name=document.createElement('b');name.textContent=bike.name;
-    const silhouette=document.createElement('div');silhouette.className='bike-silhouette';silhouette.setAttribute('aria-hidden','true');
-    const detail=document.createElement('p');detail.textContent=bike.description;
-    const button=document.createElement('button');button.className='outline';
-    const owned=!!p.owned[bike.id];
-    button.textContent=p.selected===bike.id?'Selected':owned?'Ride this bike':'Buy · '+bike.price+' CR';
-    button.disabled=garageBusy||p.selected===bike.id||!owned&&p.credits<bike.price;
-    button.addEventListener('click',()=>void garageAction(()=>owned?progress.select(bike.id):progress.buy(bike.id)));
-    card.append(silhouette,name,detail,button);return card;
+    const state=document.createElement('small');state.textContent=p.selected===bike.id?'✓ RIDING':p.owned[bike.id]?'OWNED':collectionUnlocked(p.owned,bike.id)?bike.price+' CR':'LOCK';
+    card.append(image,name,state);card.addEventListener('click',()=>{garageBike=bike.id;garageComponent='';renderGarage();});return card;
   }));
-  el('garageSpec').textContent=stats.name+' · Speed '+Math.round(100*stats.speed)+' · Acceleration '+Math.round(100*stats.acceleration)+' · Cooling '+Math.round(100*stats.cooling)+' · Grip '+Math.round(100*stats.grip);
+  el('garageSpec').replaceChildren(...(['speed','acceleration','cooling','suspension','grip'] as const).map((key,i)=>{
+    const row=document.createElement('div');row.className='spec-row';
+    const label=document.createElement('span');label.textContent=['Speed','Launch','Cooling','Landing','Grip'][i];
+    const bar=document.createElement('meter');bar.min=0.5;bar.max=2.4;bar.value=stats[key];bar.setAttribute('aria-label',label.textContent+' '+Math.round(stats[key]*100));
+    row.append(label,bar);return row;
+  }));
+  el('garageLocks').textContent=unlocked?'':['starter','swift','redline'].map(id=>(p.owned[id as BikeId]?'✓ ':'○ ')+BIKE_CATALOG.find(b=>b.id===id)!.name).join(' · ');
+  el('garagePaint').replaceChildren(...PAINTS.map(paint=>{
+    const swatch=document.createElement('button');swatch.className='paint-swatch';swatch.style.background='#'+paint.color.toString(16).padStart(6,'0');
+    swatch.setAttribute('aria-label',paint.name+' paint');swatch.setAttribute('aria-pressed',String(paint.color===stats.color));swatch.disabled=!owned||garageBusy;
+    swatch.addEventListener('click',()=>void garageAction(()=>progress.paint(garageBike,paint.color)));return swatch;
+  }));
+  const equip=el<HTMLButtonElement>('garageEquip');equip.textContent=!unlocked?'Own the first three bikes':p.selected===garageBike?'✓ Equipped':owned?'Ride this bike':'Buy · '+stats.price+' CR';
+  equip.disabled=garageBusy||!unlocked||p.selected===garageBike||!owned&&p.credits<stats.price;
+  el<HTMLButtonElement>('garagePractice').disabled=!owned||garageBusy;
   el('garageUpgrades').replaceChildren(...UPGRADE_KEYS.map(key=>{
-    const level=loadout.levels[key],info=UPGRADE_INFO[key];
-    const button=document.createElement('button');button.className='upgrade-button';
-    const name=document.createElement('b');name.textContent=info.name+' '+level+'/3';
-    const benefit=document.createElement('span');benefit.textContent=info.benefit;
-    const price=document.createElement('small');price.textContent=level===3?'Fully upgraded':UPGRADE_PRICES[level]+' CR';
-    button.append(name,benefit,price);
-    button.disabled=garageBusy||level===3||p.credits<UPGRADE_PRICES[level];
-    button.addEventListener('click',()=>void garageAction(()=>progress.upgrade(loadout.bike,key)));
-    return button;
+    const level=loadout.levels[key],info=UPGRADE_INFO[key],next={...loadout,levels:{...loadout.levels,[key]:Math.min(3,level+1)}};
+    const nextStats=bikeStats(next),metric=key==='engine'?'acceleration':key==='tyres'?'grip':key;
+    const button=document.createElement('button');button.className='upgrade-button'+(garageComponent===key?' inspected':'');
+    button.setAttribute('aria-label',info.name+' '+level+' of 3. '+info.benefit+(level<3?'. Next '+Math.round((nextStats[metric]/stats[metric]-1)*100)+' percent. '+UPGRADE_PRICES[level]+' credits':'. Fully upgraded'));
+    const name=document.createElement('b');name.textContent=info.icon+' '+info.name;
+    const dots=document.createElement('span');dots.className='upgrade-levels';dots.textContent='●'.repeat(level)+'○'.repeat(3-level);
+    const price=document.createElement('small');price.textContent=level===3?'MAX':UPGRADE_PRICES[level]+' CR · +'+Math.round((nextStats[metric]/stats[metric]-1)*100)+'%';
+    button.append(name,dots,price);button.disabled=garageBusy||!owned;
+    button.addEventListener('click',()=>{if(garageComponent!==key){garageComponent=key;renderGarage();el('garageStatus').textContent=info.benefit+(level<3?' · Tap again to upgrade':' · Maximum level');return;}
+      if(level<3)void garageAction(()=>progress.upgrade(garageBike,key));});return button;
   }));
 }
-button('garageButton',()=>{renderGarage();show('garage');});
-button('selectGarage',()=>{renderGarage();show('garage');});
+button('garageEquip',()=>void garageAction(()=>progress.read().owned[garageBike]?progress.select(garageBike):progress.buy(garageBike)));
+function openGarage(){garageBike=progress.loadout().bike;garageComponent='';renderGarage();show('garage');}
+button('garageButton',openGarage);button('selectGarage',openGarage);
+button('garagePractice',()=>{void garageAction(async()=>{await progress.select(garageBike);mode='practice';start(course);return '';});});
+const stage=el('garageStage');let dragX:number|undefined;
+stage.addEventListener('pointerdown',event=>{dragX=event.clientX;stage.setPointerCapture(event.pointerId);});
+stage.addEventListener('pointermove',event=>{if(dragX===undefined)return;view?.rotateGarage((event.clientX-dragX)*0.012);dragX=event.clientX;});
+for(const name of ['pointerup','pointercancel','lostpointercapture'])stage.addEventListener(name,()=>{dragX=undefined;});
+stage.addEventListener('keydown',event=>{if(event.key==='ArrowLeft'||event.key==='ArrowRight'){event.preventDefault();view?.rotateGarage(event.key==='ArrowLeft'?-0.15:0.15);}});
 button('garageBack',()=>{renderCourses();show('select');});
 window.addEventListener('storage',event=>{
   if(event.key==='voxel-bikes:v1:progress'){
@@ -607,13 +612,17 @@ function nextCamera(){setCamera((cameraIndex+1)%CAMERA_NAMES.length);syncSetting
 setCamera(settings.camera??0);
 soundToggle.checked=settings.sound;qualityToggle.checked=settings.quality;sound.enabled=settings.sound;
 function syncSettings(){
+  sound.audienceVolume=Number(el<HTMLInputElement>('crowdVolume').value)/100;
   sound.enabled=soundToggle.checked;
   if(view)view.quality=qualityToggle.checked;
-  save('settings',{sound:sound.enabled,quality:qualityToggle.checked,camera:cameraIndex});
+  save('settings',{sound:sound.enabled,quality:qualityToggle.checked,camera:cameraIndex,crowdVolume:sound.audienceVolume});
 }
 soundToggle.addEventListener('change',()=>{syncSettings();sound.unlock();});
 qualityToggle.addEventListener('change',syncSettings);
 cameraSetting.addEventListener('change',()=>{setCamera(Number(cameraSetting.value));syncSettings();});
+el<HTMLInputElement>('crowdVolume').value=String(Math.round((settings.crowdVolume??0.7)*100));
+sound.audienceVolume=settings.crowdVolume??0.7;
+el('crowdVolume').addEventListener('input',syncSettings);
 mountOptionControls();
 let last=performance.now(), accumulator=0;
 function loop(now:number){

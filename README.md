@@ -9,11 +9,15 @@ Use **Z** for throttle, **X** for turbo, **↑/↓** to change lanes, **←/→*
 
 Practice loops endlessly on all five circuits until you return to Main Menu. Its lap time, best lap and skill score stay in the session. Rival Race offers Easy (default), Medium and Hard opponents.
 
-The Garage starts with a free Trail 125. Completed races earn credits and skill points. Credits buy the Swift 150 or Redline 250 and three levels each of engine, cooling, suspension and tyre upgrades. Purchases and race rewards share one browser save. Practice awards no credits.
+The Garage displays the actual race models in a rotatable showroom with five model previews, free per-bike paint, performance bars and component inspection. Tap an upgrade once to inspect it and again to purchase it. Trail 125 is free; Swift 150 (750 CR) and Redline 250 (1,250 CR) unlock Boulevard 900 cruiser (1,650 CR) and Apex 600 sport bike (2,000 CR) once all three originals are owned. Unlocked bikes still need to be purchased. All five have distinct geometry, cockpit views, engine voices and handling. The Practice shortcut tries the displayed owned bike without awarding credits.
 
-Time Trial saves your best run as a ghost when browser storage is available. Rival Race and Time Trial offer 3, 5 or 7 laps, with individual splits and the fastest lap in the results. Next Track starts the next course with the same race settings.
+Engine, cooling, suspension and tyre upgrades each have three levels (150 / 300 / 500 CR). Engine levels add 12% acceleration and 4.5% speed per level; cooling levels add 23% cooling capacity, suspension 17% landing support, and tyres 10% grip plus wet control. Visual components change with upgrades. Opponents use real bike configurations: conservative starter/cruiser/stunt bikes on Easy, a broader upgraded lineup on Medium, and competition/sport/stunt bikes on Hard. Rival paints are selected to stay distinct from the player and one another across bikes, map dots and podiums.
 
-Light and weather default to Random, independently resolving when a new race or Next Track starts. Choose Morning, Noon, Evening or Night and Clear, Rain or Thunderstorm to fix either setting. Restart and Race Again keep the resolved conditions; Practice keeps them until you leave. The transparent circuit map follows each rider, with a white halo around the player and distinct rival colors shared by bikes and podiums. Rain changes braking and lane response. Night uses a headlight and reflective markers. Time Trial compares previous runs for the same conditions and bike configuration, and Rival Race ranks confirmed finishers on the podium.
+Light and weather default to Random. New races and Next Track resolve them independently; Restart and Race Again keep the resolved conditions. Practice keeps its conditions until you leave. Evening adds 5%, Night 15%, Rain 10% and Thunderstorm 20% to eligible skill events and completed-race credits, capped at 35% combined. Rival difficulty adds its existing credit bonus. The finish screen breaks down base, difficulty and condition credits.
+
+Time Trial saves a ghost for matching track, laps, conditions, bike and upgrade configuration. Handling changes in v0.9 use a new record namespace; old records remain stored but are not compared against new physics. Paint does not separate records. Existing credits, ownership and upgrades are preserved. Practice loops indefinitely without credit farming.
+
+Audio includes offline synthesized vocal ensembles, applause, whistles, gasps and distance-faded stand ambience, with independent audience volume. Night uses a headlight; rain affects traction and braking. All gameplay assets and audio work without a network connection.
 
 ## Build
 

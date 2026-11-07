@@ -21,7 +21,7 @@ export function mountOptionControls(){
     const options=Array.from(select.options,option=>{
       const item=document.createElement('button');
       item.type='button';item.className='option-item';item.setAttribute('role','option');
-      item.textContent=option.textContent;item.disabled=option.disabled;
+      item.textContent=option.textContent;item.dataset.choice=option.value;item.setAttribute('aria-label',option.textContent??'');item.disabled=option.disabled;
       item.addEventListener('click',()=>{
         select.value=option.value;select.dispatchEvent(new Event('change',{bubbles:true}));
         refresh();close(true);
@@ -30,7 +30,7 @@ export function mountOptionControls(){
     });
     function refresh(){
       const selected=select.selectedOptions[0];
-      button.textContent=selected?.textContent??'';
+      button.textContent=selected?.textContent??'';button.dataset.choice=selected?.value??'';
       button.setAttribute('aria-label',name+' · '+(selected?.textContent??''));
       button.disabled=select.disabled;
       options.forEach((option,i)=>option.setAttribute('aria-selected',String(i===select.selectedIndex)));

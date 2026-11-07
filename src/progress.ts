@@ -1,9 +1,9 @@
-import {BASE_LOADOUT, BIKE_CATALOG, UPGRADE_KEYS, UPGRADE_PRICES, validLoadout,
+import {BASE_LOADOUT, BIKE_CATALOG, UPGRADE_KEYS, UPGRADE_PRICES, validLoadout, PAINTS, collectionUnlocked,
   type BikeId, type Levels, type Loadout, type Upgrade} from './bikes';
 
 export interface Progress {
   version:1; credits:number; points:number; selected:BikeId;
-  owned:Partial<Record<BikeId,Levels>>; paid:string[]; revision:number;
+  paints?:Partial<Record<BikeId,number>>; owned:Partial<Record<BikeId,Levels>>; paid:string[]; revision:number;
 }
 export interface StorageLike {getItem(key:string):string|null;setItem(key:string,value:string):void}
 const KEY='voxel-bikes:v1:progress';
@@ -17,7 +17,7 @@ function valid(value:unknown):value is Progress {
     Number.isSafeInteger(p.revision)&&p.revision>=0&&!!p.owned&&!!p.owned.starter&&
     BIKE_CATALOG.every(b=>!p.owned[b.id]||validLoadout({bike:b.id,levels:p.owned[b.id]}))&&
     BIKE_CATALOG.some(b=>b.id===p.selected&&p.owned[b.id])&&Array.isArray(p.paid)&&p.paid.length<=256&&
-    p.paid.every(id=>typeof id==='string');
+    p.paid.every(id=>typeof id==='string')&&(p.paints===undefined||!!p.paints&&typeof p.paints==='object'&&Object.entries(p.paints).every(([id,color])=>BIKE_CATALOG.some(b=>b.id===id)&&PAINTS.some(paint=>paint.color===color)));
 }
 export class ProgressStore {
   private memory=initial();
@@ -37,7 +37,7 @@ export class ProgressStore {
     return structuredClone(this.memory);
   }
   loadout():Loadout {
-    const p=this.read();return {bike:p.selected,levels:{...p.owned[p.selected]!}};
+    const p=this.read();return {bike:p.selected,levels:{...p.owned[p.selected]!},paint:p.paints?.[p.selected]};
   }
   private mutate(change:(p:Progress)=>string):Promise<string> {
     const operation=()=>{
@@ -67,9 +67,14 @@ export class ProgressStore {
       const bike=BIKE_CATALOG.find(b=>b.id===id);
       if(!bike)return 'Unknown bike';
       if(p.owned[id])return 'Already owned';
+      if(!collectionUnlocked(p.owned,id))return 'Own Trail, Swift and Redline to unlock';
       if(p.credits<bike.price)return 'Not enough credits';
       p.credits-=bike.price;p.owned[id]={...BASE_LOADOUT.levels};p.selected=id;return '';
     });
+  }
+  paint(id:BikeId,color:number){
+    return this.mutate(p=>{if(!p.owned[id]||!PAINTS.some(paint=>paint.color===color))return 'Select an owned bike';
+      p.paints??={};p.paints[id]=color;return '';});
   }
   upgrade(id:BikeId,key:Upgrade){
     return this.mutate(p=>{

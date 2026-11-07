@@ -1,4 +1,4 @@
-import {type BikeId} from './bikes';
+import {BASE_LOADOUT,bikeStats,type Loadout,type BikeId} from './bikes';
 import * as T from 'three';
 import {DEFAULT_CONDITIONS, wetness, type Conditions} from './conditions';
 import {RaceEffects} from './race-effects';
@@ -35,89 +35,93 @@ interface RiderLimbs {
   thigh:T.Mesh; shin:T.Mesh; boot:T.Mesh; upperArm:T.Mesh; forearm:T.Mesh;
 }
 interface RiderView {
-  root:T.Group; body:T.Group; person:T.Group; wheels:T.Group[]; steering:T.Group; gloves:T.Group; limbs:RiderLimbs[]; shadow:T.Mesh<T.CircleGeometry,T.MeshBasicMaterial>; fork:T.Mesh;
+  design:BikeId;handleY:number;handleX:number;forkY:number;root:T.Group; body:T.Group; person:T.Group; wheels:T.Group[]; steering:T.Group; gloves:T.Group; limbs:RiderLimbs[]; shadow:T.Mesh<T.CircleGeometry,T.MeshBasicMaterial>; fork:T.Mesh;
 }
-function makeRider(scene:T.Scene,color:number,ghost=false,design:BikeId='starter'):RiderView {
+function makeRider(scene:T.Scene,color:number,ghost=false,design:BikeId='starter',levels=BASE_LOADOUT.levels):RiderView {
   const root=new T.Group(),body=new T.Group(),person=new T.Group();
-  scene.add(root); root.add(body); body.add(person);
-  const ink=0x18242b, silver=0xb2bbc1, white=0xf9f0d4;
-  const b=(c:number,x:number,y:number,z:number,w:number,h:number,d:number) => box(body,c,x,y,z,w,h,d,ghost);
-  const p=(c:number,x:number,y:number,z:number,w:number,h:number,d:number) => box(person,c,x,y,z,w,h,d,ghost);
-  b(ink,-0.25,0.45,0,1.24,0.2,0.56); // seat
-  b(color,-0.90,0.35,0,0.86,0.16,0.58).rotation.z=0.18;
-  b(color,0.30,0.47,0,0.59,0.36,0.63);
-  b(silver,-0.06,-0.04,0,0.7,0.39,0.56);
-  b(ink,-0.04,-0.27,0,0.57,0.14,0.57);
-  b(silver,-0.82,0.12,0.31,0.79,0.14,0.13).rotation.z=-0.12;
-  b(color,0.98,0.30,0,0.89,0.14,0.49).rotation.z=-0.13;
-  b(white,0.64,0.53,0,0.16,0.4,0.60).rotation.z=0.25;
-  bar(body,silver,-0.94,-0.2,0.14,-0.11,0.18,0.12,0.12,ghost);
-  const fork=bar(body,silver,0.89,-0.23,0.50,0.65,0,0.14,0.47,ghost);
-  const steering=new T.Group(),gloves=new T.Group();
-  steering.position.set(0.48,0.80,0);body.add(steering);steering.add(gloves);
-  const handle=(c:number,x:number,y:number,z:number,w:number,h:number,d:number)=>box(steering,c,x,y,z,w,h,d,ghost);
-  handle(silver,-0.02,0.02,0,0.13,0.12,0.70);
+  scene.add(root);root.add(body);body.add(person);
+  const ink=0x18212a,silver=0xbac4c9,white=0xfff2db;
+  const cruiser=design==='cruiser',sport=design==='sport',swift=design==='swift',redline=design==='redline';
+  const wheelbase=cruiser?1.16:sport?1.02:swift?0.82:redline?0.97:0.90;
+  const handleY=cruiser?0.98:sport?0.65:swift?0.84:0.80, handleX=cruiser?0.36:sport?0.65:0.48;
+  const seatY=cruiser?0.26:sport?0.52:swift?0.50:0.45;
+  const b=(c:number,x:number,y:number,z:number,w:number,h:number,d:number)=>box(body,c,x,y,z,w,h,d,ghost);
+  const p=(c:number,x:number,y:number,z:number,w:number,h:number,d:number)=>box(person,c,x,y,z,w,h,d,ghost);
+  b(ink,-0.34,seatY,0,cruiser?1.20:sport?0.92:1.12,0.17,cruiser?0.70:0.52);
+  b(color,0.25,cruiser?0.40:sport?0.44:0.47,0,cruiser?0.86:0.65,cruiser?0.42:0.37,cruiser?0.77:0.61);
+  b(silver,-0.08,0,0,cruiser?0.86:0.68,0.41,cruiser?0.66:0.54);
+  b(ink,0,-0.27,0,0.57,0.14,0.57);
+  for(let i=0;i<5;i++)b(ink,-0.05,0.04+i*0.067,0,0.5,0.025,cruiser?0.70:0.56);
   for(const side of [-1,1]){
-    handle(silver,-0.045,0.08,side*0.43,0.13,0.12,0.22).rotation.x=side*0.25;
-    handle(ink,-0.11,0.12,side*0.66,0.18,0.15,0.30);
-    handle(silver,0.045,0.14,side*0.66,0.045,0.04,0.28);
-    box(gloves,white,-0.14,0.16,side*0.64,0.23,0.16,0.20,ghost);
-    box(gloves,color,-0.32,0.15,side*0.56,0.25,0.19,0.18,ghost).rotation.y=side*0.34;
-    b(silver,0.78,0.10,side*0.22,0.09,0.63,0.10).rotation.z=0.36;
-    bar(body,silver,-0.91,-0.18,-0.26,-0.08,side*0.21,0.11,0.09,ghost);
-    b(ink,-0.21,-0.02,side*0.36,0.35,0.10,0.17);
+    bar(body,silver,-wheelbase,-0.18,-0.10,0.18,side*0.20,0.10,0.09,ghost);
+    bar(body,silver,wheelbase,-0.18,handleX,handleY-0.18,side*0.20,0.09,0.09,ghost);
+    b(ink,-0.25,-0.04,side*(cruiser?0.46:0.36),cruiser?0.52:0.32,0.10,0.18);
+    b(silver,-0.58,0.08,side*0.31,cruiser?1.05:0.75,cruiser?0.14:0.11,0.13).rotation.z=cruiser?0:-0.12;
+    b(ink,-1.08,0.08,side*0.31,0.08,0.12,0.14);
+    // A visible rear spring changes with suspension upgrades.
+    b(levels.suspension?0xf5be48:silver,-0.64,0.03,side*0.21,0.12,0.38+levels.suspension*0.04,0.12).rotation.z=-0.35;
+    for(let i=0;i<3+levels.suspension;i++)b(ink,-0.64,(-0.10+i*0.055),side*0.21,0.17,0.025,0.15);
   }
-  handle(ink,-0.01,0.16,0,0.20,0.12,0.32);
-  handle(white,-0.01,0.225,0,0.14,0.025,0.22);
-  b(ink,0.15,0.68,0,0.18,0.07,0.18); // fuel cap
-  for(let i=0;i<4;i++)b(ink,0.01,0.055+i*0.065,0,0.48,0.025,0.58); // engine fins
-  b(ink,-1.12,0.20,0.31,0.08,0.13,0.13); // exhaust mouth
-  b(silver,-0.58,0.08,0,0.15,0.40,0.18).rotation.z=-0.32;
-  if(design==='swift'){
-    b(color,-0.65,0.55,0,0.65,0.09,0.50);
-    b(white,0.98,0.39,0,0.60,0.06,0.44);
-  }else if(design==='redline'){
-    b(color,0.33,0.59,0,0.66,0.19,0.67);
-    for(const side of [-1,1])b(ink,0.42,0.48,side*0.345,0.35,0.16,0.035);
-    b(silver,-0.79,0.21,0.35,0.72,0.18,0.16);
-  }
-  const limbs=[-0.33,0.33].map(z=>({
-    thigh:bar(person,ink,-0.38,0.70,0.13,0.46,z,0.25,0.23,ghost),
-    shin:bar(person,ink,0.13,0.46,-0.17,0.12,z,0.23,0.23,ghost),
-    boot:p(ink,-0.04,0.09,z,0.32,0.19,0.27),
-    upperArm:bar(person,color,-0.11,1.19,0.14,0.91,z,0.20,0.22,ghost),
-    forearm:bar(person,white,0.14,0.91,0.51,0.72,z,0.16,0.20,ghost),
-  }));
-  p(color,-0.27,0.93,0,0.54,0.59,0.54).rotation.z=-0.38;
-  p(white,-0.35,1.11,0,0.34,0.18,0.58).rotation.z=-0.38;
-  p(color,0.03,1.46,0,0.56,0.52,0.55);
-  p(color,0.12,1.73,0,0.35,0.09,0.47);
-  p(ink,0.30,1.49,0,0.20,0.18,0.56);
-  p(white,0.38,1.61,0,0.23,0.07,0.55);
-  p(color,0.24,1.31,0,0.32,0.13,0.46);
-  p(white,-0.04,1.737,0,0.14,0.07,0.57);
-  p(white,-0.12,1.47,0,0.09,0.37,0.57);
-  for(const z of [-0.306,0.306]){
-    b(white,-0.51,0.29,z,0.48,0.29,0.035);
-    for(const [x,y,w,h] of [[-0.59,0.30,0.034,0.145],[-0.52,0.30,0.034,0.145],[-0.555,0.375,0.10,0.029],
-      [-0.555,0.225,0.10,0.029],[-0.43,0.375,0.105,0.029],[-0.414,0.308,0.035,0.15]]){
-      b(ink,x,y,z*1.08,w,h,0.016);
+  if(cruiser){
+    b(color,-1.04,0.23,0,0.65,0.12,0.65);
+    b(color,1.10,0.20,0,0.67,0.12,0.49);
+    b(ink,-0.77,0.59,0,0.15,0.53,0.62).rotation.z=-0.18;
+    for(const side of [-1,1]){
+      b(color,-0.86,0.06,side*0.55,0.65,0.49,0.28); // panniers
+      bar(body,silver,-0.25,-0.02,0.08,0.26,side*0.26,0.23,0.17,ghost); // V twin
     }
+    b(silver,0.80,0.65,0,0.23,0.35,0.39);b(white,0.93,0.65,0,0.03,0.27,0.28);
+  }else if(sport){
+    b(color,0.27,0.04,0,1.10,0.55,0.80); // full fairing
+    for(const side of [-1,1]){
+      b(ink,0.28,0.13,side*0.41,0.41,0.14,0.025).rotation.z=-0.22;
+      b(white,0.48,-0.13,side*0.42,0.43,0.08,0.025);
+    }
+    b(color,0.96,0.48,0,0.55,0.43,0.75).rotation.z=0.30;
+    b(0x7898a8,0.70,0.83,0,0.08,0.43,0.53).rotation.z=0.50;
+    b(white,1.19,0.48,0,0.035,0.11,0.50);
+    b(color,-0.94,0.64,0,0.63,0.16,0.43).rotation.z=-0.15;
+  }else{
+    b(color,-0.88,seatY-0.08,0,swift?0.60:0.87,0.13,0.52).rotation.z=swift?-0.2:0.12;
+    b(color,wheelbase,0.32,0,redline?1.02:0.85,0.12,0.48).rotation.z=-0.15;
+    b(white,0.65,0.55,0,0.14,0.38,0.58).rotation.z=0.25;
+    for(const side of [-1,1]){b(white,-0.48,0.24,side*0.30,0.48,0.28,0.035);b(ink,-0.46,0.24,side*0.32,0.08,0.16,0.02);}
+    if(redline){b(color,0.26,0.64,0,0.78,0.17,0.70);for(const side of [-1,1])b(ink,0.30,0.53,side*0.36,0.40,0.15,0.03);}
+    if(swift)b(white,-0.8,0.61,0,0.49,0.07,0.43);
   }
-  b(white,0.47,0.48,0,0.07,0.19,0.65);
-  const wheels=[-0.91,0.89].map(x=>{
-    const wheel=new T.Group(); wheel.position.set(x,-0.18,0); body.add(wheel);
+  // Upgrade components are shared by the showroom and race model.
+  for(let i=0;i<levels.engine;i++)b(0xe6b354,-0.02,0.15+i*0.07,sport?0.43:0.30,0.43,0.035,0.05);
+  for(const side of [-1,1])for(let i=0;i<levels.cooling;i++)b(silver,0.42,-0.07+i*0.095,side*0.38,0.23,0.055,0.09);
+  const fork=bar(body,silver,wheelbase,-0.18,handleX,handleY-0.18,0,0.14,0.47,ghost),forkY=fork.scale.y;
+  const steering=new T.Group(),gloves=new T.Group();steering.position.set(handleX,handleY,0);body.add(steering);steering.add(gloves);
+  const handle=(c:number,x:number,y:number,z:number,w:number,h:number,d:number)=>box(steering,c,x,y,z,w,h,d,ghost);
+  const span=cruiser?0.82:sport?0.51:0.66;
+  handle(silver,0,0.02,0,0.12,0.11,span*2);
+  for(const side of [-1,1]){
+    handle(ink,-0.07,0.10,side*span,0.19,0.14,0.28);
+    handle(silver,0.07,0.13,side*span,0.04,0.035,0.25);
+    box(gloves,white,-0.10,0.15,side*span,0.22,0.17,0.19,ghost);
+    box(gloves,color,-0.28,0.14,side*(span-0.07),0.22,0.18,0.18,ghost);
+    if(cruiser||sport){handle(silver,0.05,0.37,side*(span+0.11),0.035,0.48,0.035);handle(ink,0.05,0.60,side*(span+0.11),0.10,0.15,0.24);}
+  }
+  handle(ink,0,0.17,0,0.22,0.14,sport?0.47:0.32);handle(sport?0x91e7de:white,0,0.25,0,0.16,0.025,sport?0.38:0.24);
+  const limbs=[-0.33,0.33].map(z=>({thigh:bar(person,ink,-0.38,0.70,0.13,0.46,z,0.25,0.23,ghost),shin:bar(person,ink,0.13,0.46,-0.17,0.12,z,0.23,0.23,ghost),boot:p(ink,-0.04,0.09,z,0.32,0.19,0.27),upperArm:bar(person,color,-0.11,1.19,0.14,0.91,z,0.20,0.22,ghost),forearm:bar(person,white,0.14,0.91,0.51,0.72,z,0.16,0.20,ghost)}));
+  const torso=p(color,-0.27,0.93,0,0.54,0.59,0.54);torso.rotation.z=cruiser?0.04:sport?-0.65:-0.38;
+  p(white,-0.35,1.11,0,0.34,0.18,0.58).rotation.z=torso.rotation.z;
+  const headX=cruiser?-0.24:sport?0.22:0.03,headY=cruiser?1.47:sport?1.26:1.46;
+  p(color,headX,headY,0,0.56,0.52,0.55);p(ink,headX+0.27,headY+0.03,0,0.20,0.18,0.56);p(white,headX+0.35,headY+0.15,0,0.23,0.07,0.55);p(color,headX+0.21,headY-0.15,0,0.32,0.13,0.46);
+  const wheels=[-wheelbase,wheelbase].map(x=>{
+    const wheel=new T.Group();wheel.position.set(x,-0.18,0);body.add(wheel);
     wheel.add(new T.Mesh(tyre,mat(ink,ghost)),new T.Mesh(rim,mat(silver,ghost)));
-    for (const z of [-0.19,0.19]) {
-      box(wheel,ink,0,0,z,0.61,0.06,0.033,ghost);
-      box(wheel,ink,0,0,z,0.06,0.61,0.033,ghost);
-      box(wheel,white,0,0,z*1.1,0.13,0.13,0.04,ghost);
+    for(const z of [-0.19,0.19]){
+      box(wheel,silver,0,0,z,0.61,0.06,0.033,ghost);box(wheel,silver,0,0,z,0.06,0.61,0.033,ghost);box(wheel,white,0,0,z*1.1,0.13,0.13,0.04,ghost);
     }
+    if(!sport)for(let i=0;i<8+levels.tyres*4;i++){const a=i*Math.PI*2/(8+levels.tyres*4);const tread=box(wheel,levels.tyres?0x35424b:ink,Math.cos(a)*0.525,Math.sin(a)*0.525,0,0.12,0.06,0.36+levels.tyres*0.025,ghost);tread.rotation.z=a+Math.PI/2;}
+    else for(const side of [-1,1]){box(wheel,color,0,0,side*0.2,0.52,0.045,0.025,ghost);for(let i=0;i<levels.tyres;i++)box(wheel,0x71828a,0.28,0.17-i*0.13,side*0.20,0.22,0.035,0.035,ghost);}
     return wheel;
   });
-  const shadow=new T.Mesh(circle,new T.MeshBasicMaterial({color:0x231b25,transparent:true,opacity:ghost?0:0.24,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2}));
-  shadow.scale.set(1.44,1,0.58); scene.add(shadow);
-  return {root,body,person,wheels,steering,gloves,limbs,shadow,fork};
+  const shadow=new T.Mesh(circle,new T.MeshBasicMaterial({color:0x231b25,transparent:true,opacity:ghost?0:0.24,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2}));shadow.scale.set(1.65,1,0.67);scene.add(shadow);
+  return{root,body,person,wheels,steering,gloves,limbs,shadow,fork,design,handleY,handleX,forkY};
 }
 type Block = [number,number,number,number,number,number,number];
 const decorationMaterial = new T.MeshStandardMaterial({roughness:0.92});
@@ -177,13 +181,13 @@ function poseLegsAndArms(view:RiderView,standing:number,stride=0,phase=0){
     const reach=Math.sin(cycle)*stride,step=Math.max(0,Math.cos(cycle))*stride;
     const kneeX=blend(0.13,-0.23+reach*0.19,standing), kneeY=blend(0.46,0.36+step*0.10,standing);
     const footX=blend(-0.17,-0.37+reach*0.40,standing), footY=blend(0.12,-0.02+step*0.28,standing);
-    const elbowX=blend(0.14,-0.28-reach*0.25,standing), elbowY=blend(0.91,0.88,standing);
+    const elbowX=blend(view.design==='cruiser'?-0.05:view.design==='sport'?0.37:0.14,-0.28-reach*0.25,standing), elbowY=blend(view.handleY+0.11,0.88,standing);
     limbSegment(thigh,-0.38,0.70,kneeX,kneeY);
     limbSegment(shin,kneeX,kneeY,footX,footY);
     boot.position.x=footX+0.13;
     boot.position.y=footY-0.03;
     limbSegment(upperArm,-0.11,1.19,elbowX,elbowY);
-    limbSegment(forearm,elbowX,elbowY,blend(0.51,-0.02-reach*0.30,standing),blend(0.72,0.83+Math.abs(reach)*0.14,standing));
+    limbSegment(forearm,elbowX,elbowY,blend(view.handleX+0.03,-0.02-reach*0.30,standing),blend(view.handleY-0.08,0.83+Math.abs(reach)*0.14,standing));
   });
 }
 const crashOffset=new T.Vector3(), crashPose=new T.Quaternion(), bodyInverse=new T.Quaternion();
@@ -403,7 +407,57 @@ class RaceCrowd {
     this.actors.instanceMatrix.needsUpdate=true;
   }
 }
+class Showroom {
+  readonly scene=new T.Scene();
+  readonly camera=new T.PerspectiveCamera(33,1,0.1,40);
+  angle=-0.60;
+  private model?:RiderView;
+  private key='';
+  constructor(){
+    this.scene.background=new T.Color(0x24151d);
+    this.scene.add(new T.HemisphereLight(0xffeee0,0x684c60,2.7));
+    const key=new T.DirectionalLight(0xffe0bf,3);key.position.set(3,6,5);this.scene.add(key);
+    const fill=new T.DirectionalLight(0xff4659,2);fill.position.set(-4,2,-3);this.scene.add(fill);
+    const floor=new T.Mesh(new T.CylinderGeometry(2.7,2.8,0.15,48),new T.MeshStandardMaterial({color:0x6a2635,roughness:0.7}));floor.position.y=-0.10;this.scene.add(floor);
+    for(const side of [-1,1])box(this.scene,0xffd1b2,0,0,side*1.9,3.6,0.025,0.035);
+  }
+  configure(loadout:Loadout,component=''){
+    const key=JSON.stringify(loadout)+component;if(key===this.key)return;this.key=key;
+    if(this.model){this.scene.remove(this.model.root,this.model.shadow);this.model.shadow.material.dispose();this.model.root.traverse(o=>{if(o instanceof T.Mesh&&![...materials.values()].includes(o.material))o.material.dispose();});}
+    this.model=makeRider(this.scene,bikeStats(loadout).color,false,loadout.bike,loadout.levels);
+    this.model.root.position.y=0.72;this.model.person.visible=false;this.model.gloves.visible=false;
+    if(component){
+      const names:Record<string,[number,number,number,number,number,number]>={engine:[0,0,0,0.9,0.5,0.8],cooling:[0.42,0.1,0,0.5,0.6,0.9],suspension:[-0.64,0.03,0,0.25,0.65,0.7],tyres:[0.9,-0.18,0,1.2,1.2,0.6]};
+      const v=names[component];if(v){const h=box(this.model.body,0xffcf7c,...v);h.material=new T.MeshStandardMaterial({color:0xffcf7c,emissive:0x775020,wireframe:true,transparent:true,opacity:0.65});}
+    }
+  }
+  frame(renderer:T.WebGLRenderer,aspect:number){
+    this.camera.aspect=aspect;this.camera.updateProjectionMatrix();
+    this.camera.position.set(Math.sin(this.angle)*5.7,2.5,Math.cos(this.angle)*5.7);this.camera.lookAt(0,0.95,0);
+    renderer.render(this.scene,this.camera);
+  }
+}
 export class View {
+  private readonly showroom=new Showroom();
+  private garageHost?:HTMLElement;
+  private readonly previews=new Map<string,string>();
+  setGarage(host?:HTMLElement){this.garageHost=host;}
+  configureGarage(loadout:Loadout,component=''){this.showroom.configure(loadout,component);}
+  rotateGarage(delta:number){this.showroom.angle+=delta;}
+  preview(loadout:Loadout){
+    const key=JSON.stringify(loadout);const cached=this.previews.get(key);if(cached)return cached;
+    const stage=new Showroom();stage.configure(loadout);
+    const target=new T.WebGLRenderTarget(200,120),renderer=this.renderer;
+    renderer.setRenderTarget(target);stage.frame(renderer,200/120);
+    const pixels=new Uint8Array(200*120*4);renderer.readRenderTargetPixels(target,0,0,200,120,pixels);renderer.setRenderTarget(null);target.dispose();
+    const canvas=document.createElement('canvas');canvas.width=200;canvas.height=120;const ctx=canvas.getContext('2d')!;
+    const image=ctx.createImageData(200,120);for(let y=0;y<120;y++)image.data.set(pixels.subarray((119-y)*800,(120-y)*800),y*800);ctx.putImageData(image,0,0);
+    const data=canvas.toDataURL();this.previews.set(key,data);
+    stage.scene.traverse(o=>{if(o instanceof T.Mesh){if(o.geometry!==cube&&o.geometry!==tyre&&o.geometry!==rim&&o.geometry!==circle)o.geometry.dispose();if(![...materials.values()].includes(o.material))o.material.dispose();}});
+    if(this.previews.size>30)this.previews.delete(this.previews.keys().next().value!);
+    return data;
+  }
+
   private scene = new T.Scene();
   private camera = new T.PerspectiveCamera(33,1,0.15,170);
   private readonly title=new TitleTrack();
@@ -731,6 +785,14 @@ export class View {
       this.camera.aspect=w/h;
       this.camera.updateProjectionMatrix();
     }
+    if(this.garageHost&&!this.garageHost.closest('[hidden]')){
+      const bounds=this.garageHost.getBoundingClientRect();
+      this.renderer.setClearColor(0x24151d);this.renderer.clear();
+      this.renderer.setViewport(bounds.left,h-bounds.bottom,bounds.width,bounds.height);
+      this.renderer.setScissor(bounds.left,h-bounds.bottom,bounds.width,bounds.height);this.renderer.setScissorTest(true);
+      this.showroom.frame(this.renderer,bounds.width/Math.max(1,bounds.height));
+      this.renderer.setScissorTest(false);this.renderer.setViewport(0,0,w,h);return;
+    }
     if(!race){this.title.frame(this.renderer,dt,this.camera.aspect,!this.reduceMotion);return;}
     this.elapsed+=dt;
     const bikes:Bike[]=[race.rider,...race.rivals].map((b,i)=>{
@@ -750,12 +812,13 @@ export class View {
     while(this.riders.length<n){
       const rival=this.riders.length>0;
       const view=makeRider(this.scene,race.colors[this.riders.length],
-        false,rival?'starter':race.loadout.bike);
+        false,rival?race.opponentLoadouts[this.riders.length-1].bike:race.loadout.bike,
+        rival?race.opponentLoadouts[this.riders.length-1].levels:race.loadout.levels);
       if(rival)this.visibility.addGroup(view.root);
       this.riders.push(view);
     }
     const ghost=race.ghost;
-    if(ghost&&this.riders.length===n)this.riders.push(makeRider(this.scene,0xe8edf1,true,ghost.loadout?.bike??'starter'));
+    if(ghost&&this.riders.length===n)this.riders.push(makeRider(this.scene,0xe8edf1,true,ghost.loadout?.bike??'starter',ghost.loadout?.levels??BASE_LOADOUT.levels));
     const showGhost=ghost && race.time>=0 && race.time<=ghost.frames[ghost.frames.length-1][0];
     if(showGhost){
       const i=clamp(Math.floor(race.time/(DT*6)),0,ghost.frames.length-1);
@@ -779,12 +842,12 @@ export class View {
       view.person.position.set(0,-bike.impact*0.13,0);
       view.person.rotation.set(0,0,-bike.impact*0.17-bike.wheelie*0.14+
         Math.sin(this.elapsed*18)*Math.min(0.025,bike.speed/900));
-      view.fork.scale.y=0.14-bike.impact*0.026;
+      view.fork.scale.y=view.forkY-bike.impact*0.026;
       view.wheels.forEach(w=>{w.rotation.z=bike.spin;w.position.y=-0.18+bike.impact*0.08;});
       view.person.visible=i!==0||!firstPerson;
       view.gloves.visible=!bike.crash;
       view.steering.rotation.y=clamp(-bike.lean*0.38,-0.16,0.16);
-      view.steering.position.y=0.80-bike.impact*0.07;
+      view.steering.position.y=view.handleY-bike.impact*0.07;
       if(bike.crash)animateCrash(view,this.track,bike,ground);
       else poseLegsAndArms(view,0);
       view.shadow.position.set(pose.x,ground+0.040,pose.z);

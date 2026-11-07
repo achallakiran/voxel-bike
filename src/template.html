@@ -41,7 +41,7 @@
       <div class="eyebrow">Redline Series / Course Select</div><h2 id="modeTitle">Time Trial</h2>
       <div class="race-options"><label class="lap-setting">Laps <select id="lapSetting"><option value="3">3</option><option value="5">5</option><option value="7">7</option></select></label>
       <label class="lap-setting">Light <select id="daylightSetting"><option selected>Random</option><option>Morning</option><option>Noon</option><option>Evening</option><option>Night</option></select></label>
-      <label class="lap-setting">Weather <select id="weatherSetting"><option selected>Random</option><option>Clear</option><option>Rain</option><option>Thunderstorm</option></select></label></div>
+      <label class="lap-setting">Weather <select id="weatherSetting"><option selected>Random</option><option>Clear</option><option>Rain</option><option>Thunderstorm</option></select></label><small id="conditionReward" class="condition-reward"></small></div>
       <label class="lap-setting">Rivals <select id="difficultySetting"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label>
       <div class="selected-bike"><span id="selectedBike"></span><button id="selectGarage" class="text-button">Garage · <span data-credits></span></button></div>
       <div id="courses" class="cards"></div>
@@ -52,17 +52,20 @@
   <section id="garage" class="screen overlay" hidden>
     <div class="panel garage-panel">
       <div class="garage-header"><div class="eyebrow">Garage</div><strong data-credits>0 CR</strong><small id="garagePoints"></small></div>
-      <div class="garage-content"><div id="garageBikes" class="garage-bikes"></div>
-      <p id="garageSpec" class="garage-spec"></p>
-      <div id="garageUpgrades" class="garage-upgrades"></div>
-      <div id="garageStatus" role="status"></div><div id="saveStatus" role="status"></div>
-      </div><div class="garage-footer"><button id="garageBack" class="solid">Choose Track →</button><button class="text-button" data-home>← Main Menu</button></div>
+      <div class="garage-content">
+        <div id="garageBikes" class="garage-bikes"></div>
+        <div class="garage-showroom">
+          <div class="garage-display"><div id="garageStage" role="img" aria-label="Bike showroom. Drag to rotate." tabindex="0"></div><div class="showroom-caption"><h2 id="garageName"></h2><small id="garageCharacter"></small><span class="rotate-hint" aria-hidden="true">↔ 360°</span></div></div>
+          <div class="garage-detail"><div id="garageSpec" class="garage-spec"></div><div id="garageLocks" class="garage-locks"></div><div id="garagePaint" class="garage-paint" aria-label="Bike paint"></div><button id="garageEquip" class="solid"></button><div id="garageUpgrades" class="garage-upgrades"></div></div>
+        </div>
+      </div><div class="garage-notice"><div id="garageStatus" role="status"></div><div id="saveStatus" role="status"></div></div><div class="garage-footer"><button id="garageBack" class="outline">Tracks →</button><button id="garagePractice" class="solid">Practice ↗</button><button class="text-button" data-home>← Menu</button></div>
     </div>
   </section>
   <section id="settings" class="screen overlay" hidden>
     <div class="panel compact">
       <div class="eyebrow">Pit Lane</div><h2>Settings</h2>
       <label class="setting">Engine &amp; race audio <input type="checkbox" id="sound" checked></label>
+      <label class="setting">Audience volume <input type="range" id="crowdVolume" min="0" max="100" value="70" aria-label="Audience volume"></label>
       <label class="setting">High-resolution rendering <input type="checkbox" id="quality" checked></label>
       <label class="setting">Race camera <select id="cameraSetting"><option value="0">Hero side</option><option value="1">Broadcast</option><option value="2">Rear chase</option><option value="3">Front quarter</option><option value="4">First person</option></select></label>
       <p class="touch-help" id="touchHelp"></p>

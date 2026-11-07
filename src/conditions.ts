@@ -25,3 +25,5 @@ export function wetness(track:Track,conditions:Conditions,x:number,z:number,surf
   const hollow=Math.max(0,-Math.sin(phase*7+z*0.42))*Math.max(0,-Math.sin(phase*3));
   return clamp(wet*(0.66+hollow*0.43),0,1);
 }
+
+export function conditionBonus(c:Conditions){return Math.min(0.35,(c.light==='Night'?0.15:c.light==='Evening'?0.05:0)+(c.weather==='Thunderstorm'?0.20:c.weather==='Rain'?0.10:0));}
