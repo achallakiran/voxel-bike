@@ -1,15 +1,22 @@
+import {BASE_LOADOUT, BIKE_CATALOG, DIFFICULTIES, UPGRADE_KEYS, UPGRADE_PRICES, UPGRADE_INFO, bikeStats, loadoutKey, validLoadout, type BikeId, type Difficulty, type Loadout} from './bikes';
+import {ProgressStore} from './progress';
 import {playStudioLogo} from './studio-logo';
 import {COURSES, DT, Track, Race, clamp, type Course, type Mode, type RecordRun} from './race';
 import {conditionKey, type Conditions} from './conditions';
 import {View, CAMERA_NAMES, type CameraIndex} from './view';
 
 const el = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E;
-type Screen = 'intro'|'home'|'select'|'settings'|'race'|'pause'|'results'|'rotate'|'error';
+type Screen = 'intro'|'home'|'select'|'settings'|'garage'|'race'|'pause'|'results'|'rotate'|'error';
 type Action = 'up'|'down'|'back'|'forward'|'gas'|'brake'|'turbo';
-const screens: Screen[]=['intro','home','select','settings','race','pause','results','rotate','error'];
+const screens: Screen[]=['intro','home','select','settings','garage','race','pause','results','rotate','error'];
 const keys: Record<string, Action> = {ArrowUp:'up',ArrowDown:'down',ArrowLeft:'back',ArrowRight:'forward',KeyZ:'gas',Space:'brake',KeyX:'turbo'};
 const rearKeys: Record<string,Action> = {ArrowUp:'forward',ArrowDown:'back',ArrowLeft:'up',ArrowRight:'down'};
 const prefix='voxel-bikes:v1:';
+let browserStorage:Storage|undefined;
+try{browserStorage=localStorage;}catch{}
+const progress=new ProgressStore(browserStorage);
+const settledRaces=new WeakSet<Race>();
+let garageBusy=false;
 function load<T>(key:string, fallback:T):T {
   try { return JSON.parse(localStorage.getItem(prefix+key) ?? 'null') ?? fallback; }
   catch { return fallback; }
@@ -138,12 +145,17 @@ let cameraIndex:CameraIndex=0;
 let rotationReturn:Screen='intro';
 const forwardView=()=>cameraIndex===2||cameraIndex===4;
 const lapSetting=el<HTMLSelectElement>('lapSetting');
+const difficultySetting=el<HTMLSelectElement>('difficultySetting');
+const savedDifficulty=load<Difficulty>('raceDifficulty','easy');
+difficultySetting.value=Object.hasOwn(DIFFICULTIES,savedDifficulty)?savedDifficulty:'easy';
+difficultySetting.addEventListener('change',()=>save('raceDifficulty',difficultySetting.value));
+function selectedDifficulty(){return difficultySetting.value as Difficulty;}
 const daylightSetting=el<HTMLSelectElement>('daylightSetting'), weatherSetting=el<HTMLSelectElement>('weatherSetting');
 function selectedConditions():Conditions{
   return {light:daylightSetting.value as Conditions['light'],weather:weatherSetting.value as Conditions['weather']};
 }
-function recordKey(courseId:string,laps:number,conditions:Conditions){
-  return courseId+':'+laps+conditionKey(conditions);
+function recordKey(courseId:string,laps:number,conditions:Conditions,loadout=progress.loadout()){
+  return courseId+':'+laps+conditionKey(conditions)+loadoutKey(loadout);
 }
 const histories=new Map<string,number[]>();
 function pastTimes(key:string,best:number|undefined){
@@ -161,7 +173,7 @@ let countdown='', lastSignal='';
 function storedRun(id:string) {
   if(runRecords.has(id))return runRecords.get(id);
   const r=load<RecordRun|null>('best:v5:'+id,null);
-  if(r&&Number.isFinite(r.time)&&r.time>0&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===10&&f.every(Number.isFinite))){
+  if(r&&Number.isFinite(r.time)&&r.time>0&&(!r.loadout||validLoadout(r.loadout))&&r.frames?.length&&r.frames.every(f=>Array.isArray(f)&&f.length===10&&f.every(Number.isFinite))){
     runRecords.set(id,r);return r;
   }
   return undefined;
@@ -221,6 +233,7 @@ button('studioContinue',()=>{
 });
 function home(){
   race=undefined;
+  refreshWallet();
   show('home');
 }
 const coursePreviews=COURSES.map(course=>{
@@ -246,14 +259,18 @@ function choose(next:Mode){
 }
 for(const control of [daylightSetting,weatherSetting])control.addEventListener('change',renderCourses);
 function renderCourses(){
-  el('modeTitle').textContent=mode==='trial'?'Time Trial':'Rival Race';
+  el('modeTitle').textContent=mode==='trial'?'Time Trial':mode==='practice'?'Practice':'Rival Race';
+  lapSetting.closest('label')!.hidden=mode==='practice';
+  difficultySetting.closest('label')!.hidden=mode!=='rival';
+  el('selectedBike').textContent=bikeStats(progress.loadout()).name;
+  refreshWallet();
   el('courses').replaceChildren(...COURSES.map((c,i)=>{
     const b=document.createElement('button');b.className='course-card';
     b.style.setProperty('--card',['#b42630','#925557','#713538','#c02430','#b48580'][i]);
     const best=mode==='trial'?storedRun(recordKey(c.id,raceLaps,selectedConditions())):undefined;
     const preview=coursePreviews[i];
     b.innerHTML='<span class="card-index">0'+(i+1)+' · '+preview.length+' M</span>'+preview.diagram+'<b>'+c.name+'</b><span>'+c.tagline+'</span>'+
-      '<small>'+(mode==='trial'?'QUALIFY '+clock(c.gold*raceLaps*1.29):raceLaps+' LAPS')+
+      '<small>'+(mode==='trial'?'QUALIFY '+clock(c.gold*raceLaps*1.29):mode==='practice'?'ENDLESS RIDE':raceLaps+' LAPS')+
       (best?' · BEST '+clock(best.time):'')+'</small>';
     b.addEventListener('click',()=>start(c));return b;
   }));
@@ -261,10 +278,11 @@ function renderCourses(){
 function start(c:Course){
   if(!view)return;
   course=c;
-  const track=new Track(course,raceLaps);
+  const track=new Track(course,mode==='practice'?1:raceLaps);
+  const loadout=progress.loadout();
   const conditions=selectedConditions();
   view.reset(track,conditions);
-  race=new Race(track,mode,mode==='trial'?storedRun(recordKey(course.id,track.laps,conditions)):undefined,conditions);
+  race=new Race(track,mode,mode==='trial'?storedRun(recordKey(course.id,track.laps,conditions,loadout)):undefined,conditions,selectedDifficulty(),loadout);
   sound.resetCrowd();sound.unlock();
   el('courseLabel').textContent=course.name.toUpperCase();
   countdown='';lastSignal='';accumulator=0;
@@ -301,6 +319,8 @@ function showPodium(entries:PodiumEntry[]){
   el('podium').hidden=!entries.length;
 }
 function endRace(finished:Race){
+  if(finished.mode==='practice')return;
+  riderColors[0]='#'+bikeStats(finished.loadout).color.toString(16).padStart(6,'0');
   el('resultCourse').textContent=course.name+' / '+(mode==='rival'?'Rival Race':'Time Trial');
   el('resultTime').textContent=clock(finished.elapsed);
   let title='Run complete',detail='Course cleared';
@@ -315,7 +335,7 @@ function endRace(finished:Race){
   }
   if(mode==='trial'){
     const time=finished.elapsed, target=course.gold*finished.track.laps;
-    const key=recordKey(course.id,finished.track.laps,finished.conditions);
+    const key=recordKey(course.id,finished.track.laps,finished.conditions,finished.loadout);
     const best=storedRun(key);
     podium=[{label:'This run',time,current:true,color:riderColors[0]},
       ...pastTimes(key,best?.time).map((previous,index)=>({
@@ -327,7 +347,7 @@ function endRace(finished:Race){
     const medal=time<=target?'Gold':time<=target*1.16?'Silver':time<=target*1.36?'Bronze':'No';
     title=medal==='No'?'Finish':medal+' medal';
     if(!best||time<best.time){
-      const run={time,frames:finished.record};
+      const run={time,frames:finished.record,loadout:finished.loadout};
       runRecords.set(key,run);
       const saved=save('best:v5:'+key,run);
       detail=saved?'New personal best · Ghost saved':'New personal best · Ghost available this session';
@@ -349,6 +369,18 @@ function endRace(finished:Race){
   el('resultTitle').textContent=title;
   el('resultDetail').textContent=detail;
   sound.beep(784,0.36);
+  const reward=el('rewardSummary');
+  if(!settledRaces.has(finished)){
+    settledRaces.add(finished);
+    const multiplier=finished.mode==='rival'?DIFFICULTIES[finished.difficulty].reward:1;
+    const placement=finished.mode==='rival'?[100,65,35,15][finished.position-1]:35;
+    const credits=Math.round((finished.track.laps*40+placement+Math.min(80,finished.points/5))*multiplier);
+    reward.textContent='+'+credits+' credits · '+finished.points+' points';
+    void progress.reward(finished.id,credits,finished.points).then(message=>{
+      refreshWallet();
+      if(race===finished&&screen==='results'&&!progress.persistent)reward.textContent+=' · '+message;
+    });
+  }
   show('results');
 }
 function setFill(id:string,percent:number){
@@ -356,10 +388,11 @@ function setFill(id:string,percent:number){
   bar.parentElement?.setAttribute('aria-valuenow',String(Math.round(percent)));
 }
 function hud(r:Race){
-  el('timeLabel').textContent=r.mode==='rival'?'P'+r.position+' / '+(r.rivals.length+1):'TIME';
-  el('time').textContent=clock(r.elapsed);
-  el('lap').textContent=' · LAP '+r.lap+' / '+r.track.laps;
-  setFill('progress',clamp((r.rider.x-r.startX)/(r.track.end-r.startX)*100,0,100));
+  el('timeLabel').textContent=r.mode==='rival'?'P'+r.position+' / '+(r.rivals.length+1):r.mode==='practice'?'LAP TIME':'TIME';
+  el('time').textContent=clock(r.mode==='practice'?r.lapTime:r.elapsed);
+  el('score').textContent=String(r.points);
+  el('lap').textContent=r.mode==='practice'?' · LAP '+r.lap+(r.practiceBest?' · BEST '+clock(r.practiceBest):''):' · LAP '+r.lap+' / '+r.track.laps;
+  setFill('progress',r.mode==='practice'?clamp(r.track.local(r.rider.x)/r.track.lapLength*100,0,100):clamp((r.rider.x-r.startX)/(r.track.end-r.startX)*100,0,100));
   setFill('heat',r.rider.heat);
   const heatLabel=el('heatLabel'), label=r.rider.hot?'ENGINE CUT':'ENGINE HEAT';
   if(heatLabel.textContent!==label)heatLabel.textContent=label;
@@ -477,6 +510,57 @@ for(const b of tapButtons){
   const release=(e:PointerEvent)=>{if(held.delete('touch:'+e.pointerId))readInput();};
   b.addEventListener('pointerup',release);b.addEventListener('pointercancel',release);b.addEventListener('lostpointercapture',release);
 }
+function refreshWallet(){
+  const p=progress.read();
+  for(const element of document.querySelectorAll<HTMLElement>('[data-credits]'))element.textContent=p.credits+' CR';
+  el('garagePoints').textContent=p.points+' lifetime points';
+  el('saveStatus').textContent=progress.persistent?'':'Progress available this session · browser save unavailable';
+}
+async function garageAction(action:()=>Promise<string>){
+  if(garageBusy)return;
+  garageBusy=true;renderGarage();
+  try{el('garageStatus').textContent=await action();}
+  catch{el('garageStatus').textContent='Could not complete purchase. Try again.';}
+  finally{garageBusy=false;renderGarage();}
+}
+function renderGarage(){
+  const p=progress.read(),loadout=progress.loadout(),stats=bikeStats(loadout);
+  refreshWallet();
+  el('garageBikes').replaceChildren(...BIKE_CATALOG.map(bike=>{
+    const card=document.createElement('div');
+    card.className='garage-bike'+(p.selected===bike.id?' selected':'');
+    card.style.setProperty('--bike-color','#'+bike.color.toString(16).padStart(6,'0'));
+    const name=document.createElement('b');name.textContent=bike.name;
+    const silhouette=document.createElement('div');silhouette.className='bike-silhouette';silhouette.setAttribute('aria-hidden','true');
+    const detail=document.createElement('p');detail.textContent=bike.description;
+    const button=document.createElement('button');button.className='outline';
+    const owned=!!p.owned[bike.id];
+    button.textContent=p.selected===bike.id?'Selected':owned?'Ride this bike':'Buy · '+bike.price+' CR';
+    button.disabled=garageBusy||p.selected===bike.id||!owned&&p.credits<bike.price;
+    button.addEventListener('click',()=>void garageAction(()=>owned?progress.select(bike.id):progress.buy(bike.id)));
+    card.append(silhouette,name,detail,button);return card;
+  }));
+  el('garageSpec').textContent=stats.name+' · Speed '+Math.round(100*stats.speed)+' · Acceleration '+Math.round(100*stats.acceleration)+' · Cooling '+Math.round(100*stats.cooling)+' · Grip '+Math.round(100*stats.grip);
+  el('garageUpgrades').replaceChildren(...UPGRADE_KEYS.map(key=>{
+    const level=loadout.levels[key],info=UPGRADE_INFO[key];
+    const button=document.createElement('button');button.className='upgrade-button';
+    const name=document.createElement('b');name.textContent=info.name+' '+level+'/3';
+    const benefit=document.createElement('span');benefit.textContent=info.benefit;
+    const price=document.createElement('small');price.textContent=level===3?'Fully upgraded':UPGRADE_PRICES[level]+' CR';
+    button.append(name,benefit,price);
+    button.disabled=garageBusy||level===3||p.credits<UPGRADE_PRICES[level];
+    button.addEventListener('click',()=>void garageAction(()=>progress.upgrade(loadout.bike,key)));
+    return button;
+  }));
+}
+button('garageButton',()=>{renderGarage();show('garage');});
+button('selectGarage',()=>{renderGarage();show('garage');});
+button('garageBack',()=>{renderCourses();show('select');});
+window.addEventListener('storage',event=>{
+  if(event.key==='voxel-bikes:v1:progress'){
+    if(screen==='garage')renderGarage();else refreshWallet();
+  }
+});
 for(const b of document.querySelectorAll<HTMLButtonElement>('[data-mode]'))b.addEventListener('click',()=>choose(b.dataset.mode as Mode));
 for(const b of document.querySelectorAll<HTMLButtonElement>('[data-home]'))b.addEventListener('click',home);
 button('settingsButton',()=>show('settings'));

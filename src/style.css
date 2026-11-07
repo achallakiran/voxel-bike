@@ -108,3 +108,32 @@ body{background:#3b2428}
 .result-actions button{min-width:0;min-height:42px;padding:6px 5px;font-size:clamp(12px,2.25vw,15px);white-space:nowrap}
 @media(orientation:portrait){.results-overview{grid-template-columns:1fr;gap:9px}.results-panel .lap-results{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-height:330px) and (orientation:landscape){.results-panel .podium-rider{width:24px;height:24px}.results-panel .lap-results{margin-block:5px 7px}}
+
+.pit-button small{margin-left:auto;font:800 11px ui-monospace,monospace;color:#ffcf8d}
+.selected-bike{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 7px;font-size:13px}
+.score-label{margin-top:4px;color:#ffd68c!important}
+.reward-summary{font:800 11px ui-monospace,monospace;color:#ffd68c;margin:0 0 7px}
+.garage-panel{width:min(830px,100%);padding:clamp(12px,2.7vh,28px)}
+.garage-header,.garage-footer{display:flex;align-items:center;gap:12px;justify-content:space-between}
+.garage-header small{color:var(--muted);font-size:11px}
+.garage-bikes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.garage-bike{padding:10px;border:1px solid var(--line);background:#4c252d}
+.garage-bike.selected{border-color:#f7c087;background:#5b2b32}
+.garage-bike b{font-size:15px}.garage-bike p{font-size:11px;min-height:2.7em;margin:5px 0}
+.garage-bike button{width:100%;min-height:36px;font-size:12px}
+.bike-silhouette{height:25px;margin:3px 9px 9px;background:linear-gradient(15deg,transparent 30%,var(--bike-color) 31% 70%,transparent 71%);border-bottom:6px double #171c23;transform:skew(-9deg)}
+.garage-spec{font:700 11px/1.5 ui-monospace,monospace;margin:8px 0}
+.garage-upgrades{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.upgrade-button{border:1px solid var(--line);background:#552b33;text-align:left;padding:9px}
+.upgrade-button b,.upgrade-button span,.upgrade-button small{display:block}.upgrade-button b{font-size:13px}
+.upgrade-button span{font-size:10px;margin:4px 0;min-height:2.6em;color:var(--muted)}
+.upgrade-button small{font-weight:800;color:#ffd68c}
+.garage-footer{margin-top:10px}.garage-footer .solid{padding:9px 15px}
+#garageStatus,#saveStatus{font-size:11px;margin-top:4px;color:#ffd68c}
+@media(max-width:520px){.garage-upgrades{grid-template-columns:repeat(2,minmax(0,1fr))}.garage-bikes{gap:4px}.garage-bike{padding:7px}.garage-header{flex-wrap:wrap}}
+@media(max-height:370px){.home{gap:6px}.pit-button{min-height:34px;padding-block:5px}.results-panel .result-detail{font-size:11px}.results-panel .lap-results{margin-block:5px 7px}.reward-summary{font-size:10px;margin-bottom:5px}.garage-bikes{margin-top:8px}}
+
+.garage-panel{display:flex;flex-direction:column;overflow:hidden}
+.garage-header,.garage-footer{flex-shrink:0}
+.garage-content{min-height:0;overflow-y:auto}
+.garage-footer{padding-top:6px;border-top:1px solid var(--line)}

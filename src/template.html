@@ -27,6 +27,8 @@
     <nav class="pit-board" aria-label="Main menu">
       <button data-mode="trial" class="pit-button"><span>01</span> Time Trial</button>
       <button data-mode="rival" class="pit-button"><span>02</span> Rival Race</button>
+      <button data-mode="practice" class="pit-button"><span>03</span> Practice</button>
+      <button id="garageButton" class="pit-button"><span>04</span> Garage <small data-credits>0 CR</small></button>
     </nav>
     <div class="pit-tools">
       <button id="settingsButton" class="pit-icon" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16M8 4v6m8 4v6"/></svg></button>
@@ -40,11 +42,23 @@
       <div class="race-options"><label class="lap-setting">Laps <select id="lapSetting"><option value="3">3</option><option value="5">5</option><option value="7">7</option></select></label>
       <label class="lap-setting">Light <select id="daylightSetting"><option>Morning</option><option selected>Noon</option><option>Evening</option><option>Night</option></select></label>
       <label class="lap-setting">Weather <select id="weatherSetting"><option>Clear</option><option>Rain</option><option>Thunderstorm</option></select></label></div>
+      <label class="lap-setting">Rivals <select id="difficultySetting"><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option></select></label>
+      <div class="selected-bike"><span id="selectedBike"></span><button id="selectGarage" class="text-button">Garage · <span data-credits></span></button></div>
       <div id="courses" class="cards"></div>
       <button class="text-button" data-home>← Main menu</button>
     </div>
   </section>
 
+  <section id="garage" class="screen overlay" hidden>
+    <div class="panel garage-panel">
+      <div class="garage-header"><div class="eyebrow">Garage</div><strong data-credits>0 CR</strong><small id="garagePoints"></small></div>
+      <div class="garage-content"><div id="garageBikes" class="garage-bikes"></div>
+      <p id="garageSpec" class="garage-spec"></p>
+      <div id="garageUpgrades" class="garage-upgrades"></div>
+      <div id="garageStatus" role="status"></div><div id="saveStatus" role="status"></div>
+      </div><div class="garage-footer"><button id="garageBack" class="solid">Choose Track →</button><button class="text-button" data-home>← Main Menu</button></div>
+    </div>
+  </section>
   <section id="settings" class="screen overlay" hidden>
     <div class="panel compact">
       <div class="eyebrow">Pit Lane</div><h2>Settings</h2>
@@ -59,7 +73,7 @@
 
   <section id="race" class="screen" hidden>
     <div class="hud">
-      <div class="hud-chip"><small id="timeLabel">TIME</small><strong id="time">00:00.00</strong></div>
+      <div class="hud-chip"><small id="timeLabel">TIME</small><strong id="time">00:00.00</strong><small class="score-label"><span id="score">0</span> PTS</small></div>
       <div class="hud-middle"><div class="course-label"><span id="courseLabel"></span><span id="lap"></span></div><div class="course-progress" role="progressbar" aria-label="Course progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="progress"></i></div></div>
       <div class="hud-right">
         <div class="hud-chip heat-chip"><small id="heatLabel">ENGINE HEAT</small><div class="heat" role="meter" aria-label="Engine heat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="heat"></i></div></div>
@@ -97,7 +111,7 @@
         <div id="podium" class="podium" aria-label="Race podium" hidden></div>
       </div>
       <ol id="lapResults" class="lap-results" aria-label="Lap times, star marks fastest"></ol>
-      <div class="result-actions">
+      <div id="rewardSummary" class="reward-summary"></div><div class="result-actions">
         <button id="nextTrack" class="solid">Next Track →</button>
         <button id="retry" class="outline">Race Again</button>
         <button id="resultExit" class="outline">Main Menu</button>
